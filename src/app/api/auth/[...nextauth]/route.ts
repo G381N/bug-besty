@@ -3,6 +3,7 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import { connectToDatabase } from "@/lib/mongodb";
 import { User } from "@/models/User";
 import bcrypt from "bcryptjs";
+import mongoose from "mongoose";
 
 // Create a cached connection to improve performance
 let cachedConnection = null;
@@ -17,36 +18,51 @@ export const authOptions = {
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) {
+          console.log("Missing credentials");
           return null;
         }
 
         try {
-          // Use cached connection to avoid connection overhead on every auth request
+          // More robust connection handling
           if (!cachedConnection) {
-            cachedConnection = await connectToDatabase();
+            console.log("Establishing MongoDB connection...");
+            try {
+              cachedConnection = await connectToDatabase();
+              console.log("MongoDB connection established successfully");
+            } catch (connError) {
+              console.error("MongoDB connection failed:", connError.message);
+              // Throw a clear error that will show in logs
+              throw new Error(`MongoDB connection failed: ${connError.message}`);
+            }
           }
           
-          // Set a timeout for the database query to avoid hanging indefinitely
-          const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error("Database query timeout")), 5000)
-          );
+          console.log(`Attempting to find user with email: ${credentials.email}`);
           
-          const userPromise = User.findOne({ email: credentials.email });
-          const user = await Promise.race([userPromise, timeoutPromise]);
+          // Ensure User model is properly initialized
+          if (!mongoose.models.User && User) {
+            console.log("Initializing User model");
+          }
+          
+          // Direct query without timeout to see if that's causing issues
+          const user = await User.findOne({ email: credentials.email });
           
           if (!user) {
+            console.log("No user found with provided email");
             return null;
           }
 
+          console.log("User found, validating password");
           const isPasswordValid = await bcrypt.compare(
             credentials.password,
             user.password
           );
 
           if (!isPasswordValid) {
+            console.log("Password validation failed");
             return null;
           }
 
+          console.log("Authentication successful");
           return {
             id: user._id.toString(),
             email: user.email,
@@ -54,10 +70,15 @@ export const authOptions = {
           };
         } catch (error) {
           console.error("Authentication error:", error);
+          console.error("Error stack:", error.stack);
           
-          // Add more specific error logging for connection issues
+          // Specific error handling
           if (error.message && error.message.includes("IP address is not allowed")) {
             console.error("MongoDB Atlas IP whitelist error - please add Vercel's IP to MongoDB Atlas Network Access");
+          }
+          
+          if (error.name === "MongooseServerSelectionError") {
+            console.error("Could not connect to MongoDB server. Please check your connection string and network settings.");
           }
           
           return null;
@@ -65,11 +86,13 @@ export const authOptions = {
       },
     }),
   ],
+  debug: true, // Enable debug mode for development
   session: {
     strategy: "jwt",
   },
   pages: {
     signIn: "/login",
+    error: "/login?error=true", // Custom error page
   },
   callbacks: {
     async jwt({ token, user }) {

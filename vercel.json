@@ -14,7 +14,12 @@
       }
     }
   ],
-  "crons": [],
+  "crons": [
+    {
+      "path": "/api/tasks/process",
+      "schedule": "* * * * *"
+    }
+  ],
   "github": {
     "silent": true
   }

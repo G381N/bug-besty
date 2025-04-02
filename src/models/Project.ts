@@ -3,27 +3,46 @@ import mongoose from 'mongoose';
 const projectSchema = new mongoose.Schema({
   name: {
     type: String,
-    required: [true, 'Project name is required'],
+    required: true,
     trim: true
   },
-  mainDomain: {
+  targetDomain: {
     type: String,
-    required: [true, 'Main domain is required'],
-    trim: true
+    required: true,
+    trim: true,
+    lowercase: true
   },
-  status: {
-    type: String,
-    enum: ['active', 'archived', 'deleted'],
-    default: 'active'
-  },
-  userId: {
+  owner: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: [true, 'User ID is required']
+    required: true
+  },
+  team: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  status: {
+    type: String,
+    enum: ['initializing', 'active', 'archived'],
+    default: 'active'
+  },
+  enumerationTaskId: {
+    type: String
+  },
+  subdomainsCount: {
+    type: Number,
+    default: 0
+  },
+  vulnerabilitiesFound: {
+    type: Number,
+    default: 0
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
   }
 }, {
-  timestamps: true,
-  collection: 'projects'
+  timestamps: true
 });
 
 // Update the index to include userId for proper uniqueness per user

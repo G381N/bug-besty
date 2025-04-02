@@ -3,6 +3,7 @@ import dbConnect from '@/lib/mongodb';
 import Project from '@/models/Project';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '../auth/[...nextauth]/route';
+import { createTask } from "@/lib/backgroundTasks";
 
 export async function GET() {
   try {
@@ -23,40 +24,59 @@ export async function GET() {
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(req: Request) {
   try {
-    console.log('Connecting to database...');
-    await dbConnect();
-    console.log('Connected successfully');
-
-    // Get the user session
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const data = await request.json();
-    console.log('Received project data:', data);
+    const { name, targetDomain, enumerationMethod } = await req.json();
 
-    // Add userId to the project data
-    const projectData = {
-      ...data,
-      userId: session.user.id
-    };
+    if (!name || !targetDomain) {
+      return NextResponse.json(
+        { error: "Name and target domain are required" },
+        { status: 400 }
+      );
+    }
 
-    const project = await Project.create(projectData);
-    console.log('Created project in database:', project);
+    await dbConnect();
     
-    // Verify the project was created
-    const savedProject = await Project.findById(project._id);
-    console.log('Verified project in database:', savedProject);
+    // Create project in database
+    const project = await Project.create({
+      name,
+      targetDomain,
+      owner: session.user.id,
+      status: "initializing", // New status to indicate enumeration in progress
+    });
 
-    return NextResponse.json(project);
-  } catch (error: any) {
-    console.error('Error creating project:', error);
-    return NextResponse.json({ 
-      error: 'Failed to create project', 
-      details: error.message 
-    }, { status: 500 });
+    // If auto enumeration is selected, create a background task
+    if (enumerationMethod === "auto") {
+      const task = await createTask("subdomain_enumeration", {
+        projectId: project._id.toString(),
+        targetDomain,
+      });
+      
+      // Store task ID in project
+      project.enumerationTaskId = task.id;
+      await project.save();
+    }
+
+    return NextResponse.json({
+      success: true,
+      project: {
+        id: project._id,
+        name: project.name,
+        targetDomain: project.targetDomain,
+        status: project.status,
+        enumerationTaskId: project.enumerationTaskId || null,
+      },
+    });
+  } catch (error) {
+    console.error("Error creating project:", error);
+    return NextResponse.json(
+      { error: "Failed to create project" },
+      { status: 500 }
+    );
   }
 } 

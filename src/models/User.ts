@@ -12,7 +12,8 @@ const userSchema = new mongoose.Schema({
     unique: true,
     trim: true,
     lowercase: true,
-    match: [/^\S+@\S+\.\S+$/, 'Please enter a valid email']
+    match: [/^\S+@\S+\.\S+$/, 'Please enter a valid email'],
+    index: true
   },
   password: {
     type: String,
@@ -32,6 +33,9 @@ const userSchema = new mongoose.Schema({
   timestamps: true,
   collection: 'users' // Explicitly set collection name
 });
+
+// Create a compound index for commonly queried fields
+userSchema.index({ email: 1, createdAt: -1 });
 
 // Delete password when converting to JSON
 userSchema.set('toJSON', {

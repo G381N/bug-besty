@@ -8,6 +8,11 @@ import mongoose from "mongoose";
 // Create a cached connection to improve performance
 let cachedConnection = null;
 
+// Connect to database outside of handler to improve cold start performance
+const dbPromise = connectToDatabase().catch(err => {
+  console.error("Failed to establish initial database connection:", err);
+});
+
 export const authOptions = {
   providers: [
     CredentialsProvider({
@@ -23,42 +28,36 @@ export const authOptions = {
         }
 
         try {
-          // More robust connection handling
-          if (!cachedConnection) {
-            console.log("Establishing MongoDB connection...");
-            try {
-              cachedConnection = await connectToDatabase();
-              console.log("MongoDB connection established successfully");
-            } catch (connError) {
-              console.error("MongoDB connection failed:", connError.message);
-              // Throw a clear error that will show in logs
-              throw new Error(`MongoDB connection failed: ${connError.message}`);
-            }
+          // Wait for the initial connection if it's still in progress
+          if (dbPromise) await dbPromise;
+          
+          // Don't reconnect - just use the cached connection
+          if (!mongoose.connection.readyState) {
+            console.log("Connection lost - reconnecting to MongoDB...");
+            await connectToDatabase();
           }
           
-          console.log(`Attempting to find user with email: ${credentials.email}`);
+          console.log(`Searching for user with email: ${credentials.email}`);
           
-          // Ensure User model is properly initialized
-          if (!mongoose.models.User && User) {
-            console.log("Initializing User model");
-          }
+          // Add timeout for the query
+          const queryPromise = User.findOne({ email: credentials.email }).lean().exec();
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("Database query timeout")), 5000)
+          );
           
-          // Direct query without timeout to see if that's causing issues
-          const user = await User.findOne({ email: credentials.email });
+          // Race the query against a timeout
+          const user = await Promise.race([queryPromise, timeoutPromise]);
           
           if (!user) {
-            console.log("No user found with provided email");
+            console.log("No user found");
             return null;
           }
 
-          console.log("User found, validating password");
-          const isPasswordValid = await bcrypt.compare(
-            credentials.password,
-            user.password
-          );
+          console.log("User found, checking password");
+          const isPasswordValid = await bcrypt.compare(credentials.password, user.password);
 
           if (!isPasswordValid) {
-            console.log("Password validation failed");
+            console.log("Invalid password");
             return null;
           }
 
@@ -69,16 +68,10 @@ export const authOptions = {
             name: user.name,
           };
         } catch (error) {
-          console.error("Authentication error:", error);
-          console.error("Error stack:", error.stack);
+          console.error("Authentication error:", error.message);
           
-          // Specific error handling
-          if (error.message && error.message.includes("IP address is not allowed")) {
-            console.error("MongoDB Atlas IP whitelist error - please add Vercel's IP to MongoDB Atlas Network Access");
-          }
-          
-          if (error.name === "MongooseServerSelectionError") {
-            console.error("Could not connect to MongoDB server. Please check your connection string and network settings.");
+          if (error.message === "Database query timeout") {
+            console.error("Database query took too long - consider optimizing your database");
           }
           
           return null;
@@ -86,13 +79,14 @@ export const authOptions = {
       },
     }),
   ],
-  debug: true, // Enable debug mode for development
+  debug: process.env.NODE_ENV === "development",
   session: {
     strategy: "jwt",
+    maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   pages: {
     signIn: "/login",
-    error: "/login?error=true", // Custom error page
+    error: "/login?error=true", 
   },
   callbacks: {
     async jwt({ token, user }) {

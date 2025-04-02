@@ -1,18 +1,29 @@
 export function validateEnv() {
-  if (!process.env.MONGODB_URI) {
-    console.error('⚠️ MONGODB_URI is not defined in .env');
-    process.exit(1);
+  const requiredEnvVars = [
+    'MONGODB_URI',
+    'NEXTAUTH_SECRET',
+    'NEXTAUTH_URL'
+  ];
+
+  const missingVars = requiredEnvVars.filter(
+    (envVar) => !process.env[envVar]
+  );
+
+  if (missingVars.length > 0) {
+    console.error(`Missing required environment variables: ${missingVars.join(', ')}`);
+    return false;
   }
 
-  if (!process.env.NEXTAUTH_SECRET) {
-    console.error('⚠️ NEXTAUTH_SECRET is not defined in .env');
-    process.exit(1);
+  // Validate MongoDB URI format
+  const mongoUri = process.env.MONGODB_URI;
+  if (!mongoUri?.startsWith('mongodb+srv://')) {
+    console.error('MONGODB_URI must be a valid MongoDB Atlas connection string');
+    return false;
   }
 
-  if (!process.env.NEXTAUTH_URL) {
-    console.warn('⚠️ NEXTAUTH_URL is not defined in .env, using default http://localhost:3000');
-    process.env.NEXTAUTH_URL = 'http://localhost:3000';
-  }
-
-  console.log('✅ Environment variables validated');
+  console.log('Environment variables validated successfully');
+  console.log(`NEXTAUTH_URL: ${process.env.NEXTAUTH_URL}`);
+  console.log(`MONGODB_URI exists: ${Boolean(process.env.MONGODB_URI)}`);
+  
+  return true;
 } 

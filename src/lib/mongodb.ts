@@ -1,40 +1,46 @@
 import mongoose from 'mongoose';
+import { validateEnv } from '@/utils/validateEnv';
 
 let cachedConnection = null;
 
 export async function connectToDatabase() {
+  // First validate environment variables
+  if (!validateEnv()) {
+    throw new Error("Environment validation failed - check server logs");
+  }
+
   if (cachedConnection) {
     return cachedConnection;
   }
 
   try {
-    // Check if MONGODB_URI is defined
-    if (!process.env.MONGODB_URI) {
-      throw new Error("MONGODB_URI is not defined in environment variables");
-    }
-
-    console.log("Connecting to MongoDB...");
+    console.log("Connecting to MongoDB from Vercel environment...");
     
-    // Add connection options to improve performance and reliability
+    // Print environment info for debugging
+    console.log(`Node environment: ${process.env.NODE_ENV}`);
+    console.log(`Vercel environment: ${process.env.VERCEL_ENV || 'not set'}`);
+    
+    // Add connection options for better reliability
     const options = {
-      serverSelectionTimeoutMS: 5000,
+      serverSelectionTimeoutMS: 10000, // Increased from 5000
       socketTimeoutMS: 45000,
       connectTimeoutMS: 10000,
       maxPoolSize: 10,
       retryWrites: true,
-      w: 'majority'
+      w: 'majority',
+      // Disable strict SSL validation temporarily if needed
+      // ssl: true,
+      // sslValidate: false,
     };
 
     mongoose.set("strictQuery", false);
     
-    // Log connection string (without password) for debugging
-    const sanitizedUri = process.env.MONGODB_URI.replace(
-      /mongodb\+srv:\/\/([^:]+):([^@]+)@/,
-      'mongodb+srv://$1:****@'
-    );
-    console.log(`Attempting to connect to: ${sanitizedUri}`);
+    // Direct connection without regex sanitization to avoid any issues
+    console.log(`Using MongoDB URI from environment variables`);
     
-    const connection = await mongoose.connect(process.env.MONGODB_URI, options);
+    // Connect with explicit URI from environment
+    const mongoUri = process.env.MONGODB_URI;
+    const connection = await mongoose.connect(mongoUri, options);
     console.log("MongoDB connected successfully");
     
     cachedConnection = connection;
@@ -44,9 +50,9 @@ export async function connectToDatabase() {
     console.error("Error name:", error.name);
     console.error("Error stack:", error.stack);
     
-    // Additional debugging for specific errors
     if (error.name === "MongooseServerSelectionError") {
-      console.error("Could not connect to any MongoDB servers. Please check your connection string and ensure IP whitelist includes 0.0.0.0/0");
+      console.error("CRITICAL: IP whitelist issue - You MUST add 0.0.0.0/0 to MongoDB Atlas Network Access settings");
+      console.error("Please visit MongoDB Atlas dashboard and update Network Access settings immediately");
     }
     
     throw error;

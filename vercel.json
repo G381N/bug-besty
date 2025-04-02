@@ -1,0 +1,12 @@
+{
+  "functions": {
+    "src/app/api/**/*": {
+      "memory": 1024,
+      "maxDuration": 10
+    }
+  },
+  "crons": [],
+  "github": {
+    "silent": true
+  }
+} 

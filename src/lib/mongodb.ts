@@ -1,47 +1,29 @@
 import mongoose from 'mongoose';
 
-declare global {
-  var mongoose: {
-    conn: mongoose.Connection | null;
-    promise: Promise<mongoose.Connection> | null;
-  };
-}
+let cachedConnection = null;
 
-const MONGODB_URI = process.env.MONGODB_URI;
+export async function connectToDatabase() {
+  if (cachedConnection) {
+    return cachedConnection;
+  }
 
-if (!MONGODB_URI) {
-  throw new Error(
-    'Please define the MONGODB_URI environment variable inside .env'
-  );
-}
-
-let cached = global.mongoose;
-
-if (!cached) {
-  cached = global.mongoose = { conn: null, promise: null };
-}
-
-async function dbConnect() {
   try {
-    if (cached.conn) {
-      return cached.conn;
-    }
+    // Add connection options to improve performance
+    const options = {
+      serverSelectionTimeoutMS: 5000, // Timeout after 5 seconds
+      socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
+      connectTimeoutMS: 10000, // Give up initial connection after 10 seconds
+      maxPoolSize: 10, // Maintain up to 10 socket connections
+    };
 
-    if (!cached.promise) {
-      const opts = {
-        bufferCommands: false,
-      };
-
-      cached.promise = mongoose.connect(MONGODB_URI)
-        .then((mongoose) => mongoose.connection);
-    }
-
-    cached.conn = await cached.promise;
-    return cached.conn;
-  } catch (e) {
-    cached.promise = null;
-    throw e;
+    mongoose.set("strictQuery", false);
+    const connection = await mongoose.connect(process.env.MONGODB_URI, options);
+    cachedConnection = connection;
+    return connection;
+  } catch (error) {
+    console.error("MongoDB connection error:", error);
+    throw error;
   }
 }
 
-export default dbConnect;
+export default connectToDatabase;

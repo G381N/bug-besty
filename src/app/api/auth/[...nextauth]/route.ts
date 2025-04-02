@@ -54,6 +54,12 @@ export const authOptions = {
           };
         } catch (error) {
           console.error("Authentication error:", error);
+          
+          // Add more specific error logging for connection issues
+          if (error.message && error.message.includes("IP address is not allowed")) {
+            console.error("MongoDB Atlas IP whitelist error - please add Vercel's IP to MongoDB Atlas Network Access");
+          }
+          
           return null;
         }
       },

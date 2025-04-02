@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import bcrypt from 'bcryptjs';
 
 const userSchema = new mongoose.Schema({
   name: {
@@ -36,6 +37,20 @@ const userSchema = new mongoose.Schema({
 
 // Create a compound index for commonly queried fields
 userSchema.index({ email: 1, createdAt: -1 });
+
+// Add a pre-save hook to hash the password
+userSchema.pre('save', async function(next) {
+  // Only hash the password if it's modified (or new)
+  if (!this.isModified('password')) return next();
+  
+  try {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
 
 // Delete password when converting to JSON
 userSchema.set('toJSON', {

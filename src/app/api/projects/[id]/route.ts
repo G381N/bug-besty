@@ -1,44 +1,96 @@
 import { NextResponse } from 'next/server';
-import dbConnect from '@/lib/mongodb';
-import Project from '@/models/Project';
-import Subdomain from '@/models/Subdomain';
-import Vulnerability from '@/models/Vulnerability';
+import { getDocument, getDocuments, deleteDocument } from '@/lib/firestore';
+import { Project, ProjectModel } from '@/models/Project';
+import { Subdomain, SubdomainModel } from '@/models/Subdomain';
+import { Vulnerability, VulnerabilityModel } from '@/models/Vulnerability';
 
 export async function DELETE(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   try {
-    await dbConnect();
-
     // Verify project exists
-    const project = await Project.findById(params.id);
+    const project = await getDocument<Project>('projects', params.id);
     if (!project) {
       return NextResponse.json({ 
         error: 'Project not found' 
       }, { status: 404 });
     }
 
-    // Delete in sequence to maintain data integrity
-    const subdomains = await Subdomain.find({ projectId: params.id });
-    
-    for (const subdomain of subdomains) {
-      // Delete vulnerabilities first
-      await Vulnerability.deleteMany({ subdomainId: subdomain._id });
-      // Then delete the subdomain
-      await Subdomain.findByIdAndDelete(subdomain._id);
-    }
+    // Mark the project as "deleting" to indicate its status while background deletion continues
+    await ProjectModel.update(params.id, { 
+      status: 'deleting',
+      updatedAt: new Date()
+    });
 
-    // Finally delete the project
-    await Project.findByIdAndDelete(params.id);
+    // Start background deletion process in a non-blocking way
+    // This ensures the UI response is immediate while deletion happens asynchronously
+    Promise.resolve().then(async () => {
+      try {
+        // Get all subdomains for this project
+        const subdomains = await getDocuments<Subdomain>('subdomains', {
+          fieldPath: 'projectId',
+          operator: '==',
+          value: params.id
+        });
+        
+        console.log(`Starting deletion of ${subdomains.length} subdomains for project ${params.id}`);
+        
+        // Delete each subdomain and its vulnerabilities
+        // Using a for loop instead of Promise.all to avoid overwhelming Firestore
+        for (const subdomain of subdomains) {
+          try {
+            // Get and delete vulnerabilities for this subdomain
+            const vulnerabilities = await getDocuments<Vulnerability>('vulnerabilities', {
+              fieldPath: 'subdomainId',
+              operator: '==',
+              value: subdomain.id
+            });
+            
+            // Delete each vulnerability
+            for (const vulnerability of vulnerabilities) {
+              try {
+                await deleteDocument('vulnerabilities', vulnerability.id);
+              } catch (vulnerabilityError) {
+                console.error(`Error deleting vulnerability ${vulnerability.id}:`, vulnerabilityError);
+                // Continue with next vulnerability even if one fails
+              }
+            }
+            
+            // Then delete the subdomain
+            await deleteDocument('subdomains', subdomain.id);
+          } catch (subdomainError) {
+            console.error(`Error processing subdomain ${subdomain.id}:`, subdomainError);
+            // Continue with next subdomain even if one fails
+          }
+        }
+        
+        // Finally delete the project itself
+        await deleteDocument('projects', params.id);
+        
+        console.log(`Successfully deleted project ${params.id} and all associated data`);
+      } catch (error) {
+        // Log error but don't affect user experience - deletion happens in background
+        console.error(`Background deletion error for project ${params.id}:`, error);
+        
+        // Even if there's an error, try to finalize by deleting the project itself
+        try {
+          await deleteDocument('projects', params.id);
+          console.log(`Deleted project ${params.id} after error in background process`);
+        } catch (finalDeleteError) {
+          console.error(`Failed to delete project ${params.id} after error:`, finalDeleteError);
+        }
+      }
+    });
 
+    // Immediately return success to the user
     return NextResponse.json({ 
-      message: 'Project and all associated data deleted successfully' 
+      message: 'Project deletion started successfully' 
     });
   } catch (error: any) {
-    console.error('Error deleting project:', error);
+    console.error('Error initiating project deletion:', error);
     return NextResponse.json({ 
-      error: 'Failed to delete project and associated data',
+      error: 'Failed to delete project',
       details: error.message 
     }, { status: 500 });
   }

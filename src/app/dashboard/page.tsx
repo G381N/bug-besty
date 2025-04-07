@@ -7,21 +7,29 @@ import { useRouter } from 'next/navigation';
 import { signOut, useSession } from 'next-auth/react';
 import LoadingSpinner from "@/components/common/LoadingSpinner";
 import EnumerationSpinner from "@/components/common/EnumerationSpinner";
+import ProfileIcon from "@/components/common/ProfileIcon";
 
 interface Project {
-  _id: string;
+  id: string;
   name: string;
-  mainDomain: string;
+  targetDomain: string;
   status: string;
+  owner: string;
+  team?: string[];
+  enumerationTaskId?: string;
+  subdomainsCount?: number;
+  vulnerabilitiesFound?: number;
   createdAt: string;
+  updatedAt: string;
 }
 
 interface Subdomain {
-  _id: string;
+  id: string;
   projectId: string;
   name: string;
   status: string;
   createdAt: string;
+  updatedAt: string;
 }
 
 interface ProjectStats {
@@ -53,17 +61,12 @@ export default function Dashboard() {
   const router = useRouter();
   const { data: session, update: updateSession } = useSession();
   const [isLoading, setIsLoading] = useState(true);
-  const [showDropdown, setShowDropdown] = useState(false);
-  const [showProfileModal, setShowProfileModal] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [newUsername, setNewUsername] = useState('');
-  const [updateError, setUpdateError] = useState('');
-  const [isUpdating, setIsUpdating] = useState(false);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [isProjectSwitching, setIsProjectSwitching] = useState(false);
   const [isDeletingProject, setIsDeletingProject] = useState<string | null>(null);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedSubdomains, setSelectedSubdomains] = useState<Set<string>>(new Set());
+  const [activeTab, setActiveTab] = useState<'profile' | 'password'>('profile');
 
   useEffect(() => {
     fetchProjects();
@@ -71,7 +74,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (selectedProject) {
-      fetchProjectData(selectedProject._id);
+      fetchProjectData(selectedProject.id);
     }
   }, [selectedProject]);
 
@@ -113,7 +116,7 @@ export default function Dashboard() {
     setIsProjectSwitching(true);
     try {
       setSelectedProject(project);
-      await fetchProjectData(project._id);
+      await fetchProjectData(project.id);
     } finally {
       setIsProjectSwitching(false);
     }
@@ -134,14 +137,14 @@ export default function Dashboard() {
 
       if (response.ok) {
         // Remove project from state
-        setProjects(projects.filter(p => p._id !== projectId));
+        setProjects(projects.filter(p => p.id !== projectId));
         
         // If the deleted project was selected, select the first available project
-        if (selectedProject?._id === projectId) {
-          const remainingProjects = projects.filter(p => p._id !== projectId);
+        if (selectedProject?.id === projectId) {
+          const remainingProjects = projects.filter(p => p.id !== projectId);
           if (remainingProjects.length > 0) {
             setSelectedProject(remainingProjects[0]);
-            await fetchProjectData(remainingProjects[0]._id);
+            await fetchProjectData(remainingProjects[0].id);
           } else {
             setSelectedProject(null);
           }
@@ -271,12 +274,12 @@ export default function Dashboard() {
       if (response.ok) {
         // Remove subdomain from state
         setProjectSubdomains(prevSubdomains => 
-          prevSubdomains.filter(s => s._id !== subdomainId)
+          prevSubdomains.filter(s => s.id !== subdomainId)
         );
         
         // Refresh stats
         if (selectedProject) {
-          fetchProjectData(selectedProject._id);
+          fetchProjectData(selectedProject.id);
         }
       } else {
         throw new Error('Failed to delete subdomain');
@@ -389,69 +392,6 @@ export default function Dashboard() {
     );
   };
 
-  const handleLogout = async () => {
-    await signOut({ redirect: true, callbackUrl: '/auth/login' });
-  };
-
-  const handleUpdateUsername = async () => {
-    if (!newUsername.trim()) {
-      setUpdateError('Username cannot be empty');
-      return;
-    }
-
-    setIsUpdating(true);
-    setUpdateError('');
-
-    try {
-      const response = await fetch('/api/user/update', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newUsername.trim() })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to update username');
-      }
-
-      // Update the session with new user data
-      await updateSession({
-        ...session,
-        user: {
-          ...session?.user,
-          name: newUsername.trim()
-        }
-      });
-
-      setShowProfileModal(false);
-      setShowDropdown(false);
-      setNewUsername('');
-    } catch (error) {
-      setUpdateError('Failed to update username');
-    } finally {
-      setIsUpdating(false);
-    }
-  };
-
-  const handleDeleteAccount = async () => {
-    if (!window.confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
-      return;
-    }
-
-    setIsDeleting(true);
-    try {
-      const response = await fetch('/api/user/delete', {
-        method: 'DELETE'
-      });
-
-      if (!response.ok) throw new Error('Failed to delete account');
-      
-      await signOut({ redirect: true, callbackUrl: '/' });
-    } catch (error) {
-      setIsDeleting(false);
-      alert('Failed to delete account');
-    }
-  };
-
   const handleAutoEnumeration = async () => {
     if (!targetDomain) {
       return;
@@ -502,7 +442,7 @@ export default function Dashboard() {
 
       // Update state after successful deletion
       setProjectSubdomains(prevSubdomains => 
-        prevSubdomains.filter(s => !selectedSubdomains.has(s._id))
+        prevSubdomains.filter(s => !selectedSubdomains.has(s.id))
       );
       
       // Reset selection state
@@ -511,7 +451,7 @@ export default function Dashboard() {
 
       // Refresh project data
       if (selectedProject) {
-        fetchProjectData(selectedProject._id);
+        fetchProjectData(selectedProject.id);
       }
     } catch (error) {
       console.error('Error deleting subdomains:', error);
@@ -528,7 +468,7 @@ export default function Dashboard() {
     if (selectedSubdomains.size === currentSubdomains.length) {
       setSelectedSubdomains(new Set());
     } else {
-      setSelectedSubdomains(new Set(currentSubdomains.map(s => s._id)));
+      setSelectedSubdomains(new Set(currentSubdomains.map(s => s.id)));
     }
   };
 
@@ -555,57 +495,8 @@ export default function Dashboard() {
               {selectedProject ? selectedProject.name : 'BugBesty'}
             </h1>
             
-            {/* Profile Menu */}
-            <div className="relative">
-              <button
-                onClick={() => setShowDropdown(!showDropdown)}
-                className="flex items-center space-x-2 text-sm focus:outline-none"
-              >
-                <div className="w-8 h-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center">
-                  <span className="text-primary">
-                    {session?.user?.name?.charAt(0)?.toUpperCase() || 'U'}
-                  </span>
-                </div>
-                <span className="hidden md:inline-block text-foreground/70">
-                  {session?.user?.name || 'User'}
-                </span>
-              </button>
-
-              {/* Dropdown Menu */}
-              {showDropdown && (
-                <div className="absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-secondary border border-white/10 z-50">
-                  <div className="py-1">
-                    <div className="px-4 py-2 text-sm text-foreground/70 border-b border-white/10">
-                      {session?.user?.email}
-                    </div>
-                    <button
-                      onClick={() => {
-                        setShowProfileModal(true);
-                        setShowDropdown(false);
-                      }}
-                      className="w-full text-left px-4 py-2 text-sm text-foreground hover:bg-primary/10 transition-colors duration-150"
-                    >
-                      Edit Profile
-                    </button>
-                    <button
-                      onClick={handleDeleteAccount}
-                      disabled={isDeleting}
-                      className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-500/10 transition-colors duration-150"
-                    >
-                      {isDeleting ? 'Deleting...' : 'Delete Account'}
-                    </button>
-                    <div className="border-t border-white/10">
-                      <button
-                        onClick={handleLogout}
-                        className="w-full text-left px-4 py-2 text-sm text-foreground hover:bg-primary/10 transition-colors duration-150"
-                      >
-                        Sign out
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
+            {/* Replace with ProfileIcon component */}
+            <ProfileIcon size="md" showName={true} />
           </div>
         </div>
       </div>
@@ -773,7 +664,7 @@ export default function Dashboard() {
                 {/* Subdomains List */}
                 {currentSubdomains.map((subdomain) => (
                   <div
-                    key={subdomain._id}
+                    key={subdomain.id}
                     className="flex items-center justify-between px-6 py-4 bg-black/20 
                       hover:bg-black/30 transition-colors rounded-lg group"
                   >
@@ -782,21 +673,21 @@ export default function Dashboard() {
                         <div 
                           onClick={() => {
                             const newSelected = new Set(selectedSubdomains);
-                            if (newSelected.has(subdomain._id)) {
-                              newSelected.delete(subdomain._id);
+                            if (newSelected.has(subdomain.id)) {
+                              newSelected.delete(subdomain.id);
                             } else {
-                              newSelected.add(subdomain._id);
+                              newSelected.add(subdomain.id);
                             }
                             setSelectedSubdomains(newSelected);
                           }}
                           className={`w-5 h-5 rounded border transition-all duration-200 cursor-pointer
                             flex items-center justify-center
-                            ${selectedSubdomains.has(subdomain._id)
+                            ${selectedSubdomains.has(subdomain.id)
                               ? 'bg-primary border-primary'
                               : 'border-white/20 hover:border-white/40'
                             }`}
                         >
-                          {selectedSubdomains.has(subdomain._id) && (
+                          {selectedSubdomains.has(subdomain.id) && (
                             <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                             </svg>
@@ -811,7 +702,7 @@ export default function Dashboard() {
                     
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => router.push(`/dashboard/${subdomain._id}`)}
+                        onClick={() => router.push(`/dashboard/${subdomain.id}`)}
                         className="text-primary hover:text-primary/80 transition-colors"
                       >
                         View Details →
@@ -999,71 +890,7 @@ export default function Dashboard() {
           </div>
         </Modal>
 
-        <Modal
-          isOpen={showProfileModal}
-          onClose={() => {
-            setShowProfileModal(false);
-            setNewUsername('');
-            setUpdateError('');
-          }}
-        >
-          <div className="space-y-4">
-            <h2 className="text-xl font-bold">Edit Profile</h2>
-            
-            {updateError && (
-              <div className="text-red-500 text-sm bg-red-500/10 border border-red-500/20 rounded-lg p-3">
-                {updateError}
-              </div>
-            )}
-
-            <div>
-              <label className="block text-sm font-medium text-foreground/70 mb-1">
-                Username
-              </label>
-              <input
-                type="text"
-                value={newUsername}
-                onChange={(e) => setNewUsername(e.target.value)}
-                placeholder={session?.user?.name || 'Enter new username'}
-                className="w-full p-2 bg-background border border-white/10 rounded-lg
-                  focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50"
-              />
-            </div>
-
-            <div className="flex justify-end space-x-3 mt-6">
-              <button
-                onClick={() => {
-                  setShowProfileModal(false);
-                  setNewUsername('');
-                  setUpdateError('');
-                }}
-                className="px-4 py-2 text-sm text-foreground/70 hover:text-foreground
-                  border border-white/10 rounded-lg hover:border-white/20 transition-colors"
-                disabled={isUpdating}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleUpdateUsername}
-                disabled={isUpdating}
-                className={`px-4 py-2 text-sm bg-primary hover:bg-primary/90
-                  text-white rounded-lg transition-colors flex items-center space-x-2
-                  ${isUpdating ? 'opacity-50 cursor-not-allowed' : ''}`}
-              >
-                {isUpdating ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
-                    <span>Updating...</span>
-                  </>
-                ) : (
-                  'Save Changes'
-                )}
-              </button>
-            </div>
-          </div>
-        </Modal>
-
-        {isCreatingProject && <EnumerationSpinner />}
+        {isCreatingProject && <EnumerationSpinner domain={targetDomain} />}
       </div>
     </DashboardLayout>
   );

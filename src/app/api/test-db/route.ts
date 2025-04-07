@@ -1,32 +1,32 @@
 import { NextResponse } from 'next/server';
-import { connectToDatabase } from '@/lib/mongodb';
-import mongoose from 'mongoose';
+import { db } from '@/lib/firebase';
+import { collection, getDocs, limit } from 'firebase/firestore';
 
 export async function GET() {
   try {
-    console.log("Testing database connection...");
+    // Test Firestore connection
+    console.log('Testing Firestore connection...');
     
-    // Test if we can connect to MongoDB
-    const conn = await connectToDatabase();
+    // Try to get a test document
+    const testCollection = collection(db, 'test');
+    const snapshot = await getDocs(testCollection);
     
-    // Get list of collections to verify connection is working
-    const collections = await mongoose.connection.db.listCollections().toArray();
-    const collectionNames = collections.map(c => c.name);
-    
-    return NextResponse.json({ 
-      success: true, 
-      message: "Database connection successful",
-      collections: collectionNames,
-      mongoVersion: mongoose.version
+    // Check if we can access Firestore
+    return NextResponse.json({
+      status: 'success',
+      message: 'Firebase Firestore connection is working!',
+      collectionExists: !snapshot.empty,
+      documents: snapshot.size,
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
-    console.error("Database test failed:", error);
+    console.error('Error testing Firestore connection:', error);
     
-    return NextResponse.json({ 
-      success: false, 
-      error: error.message,
-      errorType: error.name,
-      stack: error.stack
+    return NextResponse.json({
+      status: 'error',
+      message: 'Failed to connect to Firebase Firestore',
+      error: error instanceof Error ? error.message : String(error),
+      timestamp: new Date().toISOString()
     }, { status: 500 });
   }
 } 

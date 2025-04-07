@@ -1,21 +1,29 @@
 import { NextResponse } from 'next/server';
-import dbConnect from '@/lib/mongodb';
-import Subdomain from '@/models/Subdomain';
-import { ApiError } from '@/types';
+import { getDocuments } from '@/lib/firestore';
+import { Subdomain } from '@/models/Subdomain';
 
-export async function GET(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function GET(request: Request, { params }: { params: { id: string } }) {
   try {
-    await dbConnect();
-    const subdomains = await Subdomain.find({ projectId: params.id });
+    const projectId = params?.id;
+    if (!projectId) {
+      return NextResponse.json(
+        { error: 'Project ID is required' },
+        { status: 400 }
+      );
+    }
+    
+    const subdomains = await getDocuments<Subdomain>('subdomains', {
+      fieldPath: 'projectId',
+      operator: '==',
+      value: projectId
+    });
+    
     return NextResponse.json(subdomains);
-  } catch {
-    const error: ApiError = { 
-      error: 'Failed to fetch subdomains',
-      status: 500
-    };
-    return NextResponse.json(error, { status: 500 });
+  } catch (error: any) {
+    console.error('Error fetching subdomains:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch subdomains', details: error.message || 'Unknown error' },
+      { status: 500 }
+    );
   }
 } 

@@ -1,33 +1,59 @@
 import { NextResponse } from 'next/server';
-import dbConnect from '@/lib/mongodb';
-import Project from '@/models/Project';
+import { getDocuments } from '@/lib/firestore';
+import { ProjectModel, Project } from '@/models/Project';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '../auth/[...nextauth]/route';
-import { createTask } from "@/lib/backgroundTasks";
 
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
+    const session = await getServerSession();
+    if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    await dbConnect();
-    const projects = await Project.find({ 
-      userId: session.user.id,
-      status: 'active' 
-    }).sort({ createdAt: -1 });
-    
-    return NextResponse.json(projects);
+    try {
+      // Try to fetch projects from Firestore with ordering
+      const projects = await getDocuments<Project>('projects', {
+        fieldPath: 'owner',
+        operator: '==',
+        value: session.user.email,
+        orderByField: 'createdAt',
+        orderDirection: 'desc'
+      });
+      
+      // Filter for active projects only
+      const activeProjects = projects.filter(project => project.status === 'active');
+      
+      return NextResponse.json(activeProjects);
+    } catch (error) {
+      // If we get an index error, fall back to a simpler query
+      if (error instanceof Error && error.message.includes('index')) {
+        console.log('Falling back to simpler query without ordering');
+        // Simplified query without ordering
+        const projects = await getDocuments<Project>('projects', {
+          fieldPath: 'owner',
+          operator: '==',
+          value: session.user.email
+        });
+        
+        // Filter for active projects only
+        const activeProjects = projects.filter(project => project.status === 'active');
+        
+        return NextResponse.json(activeProjects);
+      }
+      
+      // If it's some other error, rethrow it
+      throw error;
+    }
   } catch (error) {
+    console.error('Failed to fetch projects:', error);
     return NextResponse.json({ error: 'Failed to fetch projects' }, { status: 500 });
   }
 }
 
 export async function POST(req: Request) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session) {
+    const session = await getServerSession();
+    if (!session?.user?.email) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -39,33 +65,44 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-
-    await dbConnect();
     
-    // Create project in database
-    const project = await Project.create({
+    // Create project in Firestore
+    const projectData = {
       name,
       targetDomain,
-      owner: session.user.id,
-      status: "initializing", // New status to indicate enumeration in progress
-    });
+      owner: session.user.email,
+      team: [],
+      status: "initializing" as const, // Type assertion to fix type error
+    };
+    
+    const project = await ProjectModel.create(projectData);
 
     // If auto enumeration is selected, create a background task
     if (enumerationMethod === "auto") {
-      const task = await createTask("subdomain_enumeration", {
-        projectId: project._id.toString(),
-        targetDomain,
-      });
-      
-      // Store task ID in project
-      project.enumerationTaskId = task.id;
-      await project.save();
+      try {
+        const { createTask } = await import("@/lib/backgroundTasks");
+        const task = await createTask("subdomain_enumeration", {
+          projectId: project.id,
+          targetDomain,
+        });
+        
+        // Store task ID in project
+        await ProjectModel.update(project.id, {
+          enumerationTaskId: task.id
+        });
+        
+        // Update local project object
+        project.enumerationTaskId = task.id;
+      } catch (error) {
+        console.error("Failed to create background task:", error);
+        // Continue without failing the entire request
+      }
     }
 
     return NextResponse.json({
       success: true,
       project: {
-        id: project._id,
+        id: project.id,
         name: project.name,
         targetDomain: project.targetDomain,
         status: project.status,

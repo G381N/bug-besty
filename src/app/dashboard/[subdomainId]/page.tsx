@@ -8,17 +8,18 @@ import Image from 'next/image';
 import { motion } from 'framer-motion';
 
 interface Vulnerability {
-  _id: string;
+  id: string;
   type: string;
   severity: string;
   status: 'Not Yet Done' | 'Found' | 'Not Found';
   notes?: string;
+  recreation_steps?: string;
   subdomainId: string;
 }
 
 interface Subdomain {
-  _id: string;
-  name: string;
+  id: string;
+  hostname: string;
   status: string;
   projectId: string;
 }
@@ -149,7 +150,10 @@ const StatusBadge = ({ status, onStatusChange, badgeId, openStatusId, setOpenSta
   return (
     <div className="relative" ref={dropdownRef}>
       <button
-        onClick={() => setOpenStatusId(openStatusId === badgeId ? null : badgeId)}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpenStatusId(openStatusId === badgeId ? null : badgeId);
+        }}
         className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-all duration-200 
           ${getStatusColor(status)} hover:bg-opacity-20`}
       >
@@ -161,7 +165,8 @@ const StatusBadge = ({ status, onStatusChange, badgeId, openStatusId, setOpenSta
           {['Not Yet Done', 'Found', 'Not Found'].map((option) => (
             <button
               key={option}
-              onClick={() => {
+              onClick={(e) => {
+                e.stopPropagation();
                 onStatusChange(option as 'Not Yet Done' | 'Found' | 'Not Found');
                 setOpenStatusId(null);
               }}
@@ -198,45 +203,51 @@ export default function SubdomainDetails() {
   const [filterSeverity, setFilterSeverity] = useState<'All' | 'High' | 'Medium' | 'Low'>('All');
   const [filterStatus, setFilterStatus] = useState<'All' | 'Not Yet Done' | 'Found' | 'Not Found'>('All');
   const [searchQuery, setSearchQuery] = useState('');
-  const [unsavedNotes, setUnsavedNotes] = useState<string>('');
+  const [unsavedNotes, setUnsavedNotes] = useState('');
+  const [unsavedRecreationSteps, setUnsavedRecreationSteps] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'unsaved' | null>(null);
   const [openStatusId, setOpenStatusId] = useState<string | null>(null);
   const [showScreenshot, setShowScreenshot] = useState(false);
-  const [selectedVulns, setSelectedVulns] = useState<Set<string>>(new Set());
+  const [selectedVulnerabilities, setSelectedVulnerabilities] = useState<Record<string, boolean>>({});
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [showAddVulnForm, setShowAddVulnForm] = useState(false);
   const [newVulnData, setNewVulnData] = useState({
     type: '',
-    severity: 'High'
+    severity: 'High',
+    recreation_steps: ''
   });
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Create debounced save function
+  // Create debounced save function for notes and recreation steps
   const debouncedSave = useCallback(
-    debounce(async (vulnId: string, notes: string) => {
+    debounce(async (vulnId: string, updates: { notes?: string; recreation_steps?: string }) => {
       setIsSaving(true);
       try {
+        console.log(`Auto-saving vulnerability ${vulnId} updates:`, updates);
         const response = await fetch(`/api/vulnerabilities/${vulnId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ notes }),
+          body: JSON.stringify(updates),
         });
 
+        const responseData = await response.json();
+        
         if (response.ok) {
-          const updatedVuln = await response.json();
+          console.log('Successfully saved:', responseData);
           setVulnerabilities(prevVulns =>
             prevVulns.map(vuln =>
-              vuln._id === vulnId ? { ...vuln, notes: updatedVuln.notes } : vuln
+              vuln.id === vulnId ? { ...vuln, ...responseData } : vuln
             )
           );
           setSaveStatus('saved');
           setTimeout(() => setSaveStatus(null), 2000);
         } else {
-          throw new Error('Failed to save notes');
+          console.error('Failed to save:', responseData.error || 'Unknown error');
+          setSaveStatus('unsaved');
         }
-      } catch (error) {
-        console.error('Error saving notes:', error);
+      } catch (error: any) {
+        console.error('Error saving:', error.message || error);
         setSaveStatus('unsaved');
       } finally {
         setIsSaving(false);
@@ -270,6 +281,10 @@ export default function SubdomainDetails() {
   useEffect(() => {
     if (selectedVuln) {
       setUnsavedNotes(selectedVuln.notes || '');
+      setUnsavedRecreationSteps(selectedVuln.recreation_steps || '');
+    } else {
+      setUnsavedNotes('');
+      setUnsavedRecreationSteps('');
     }
   }, [selectedVuln]);
 
@@ -280,54 +295,31 @@ export default function SubdomainDetails() {
 
   const handleStatusChange = async (vulnId: string, newStatus: 'Not Yet Done' | 'Found' | 'Not Found') => {
     try {
+      console.log(`Updating vulnerability ${vulnId} to status: ${newStatus}`);
+      
       const response = await fetch(`/api/vulnerabilities/${vulnId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),
       });
 
-      if (response.ok) {
-        setVulnerabilities(prevVulns =>
-          prevVulns.map(vuln =>
-            vuln._id === vulnId ? { ...vuln, status: newStatus } : vuln
-          )
-        );
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error('Server returned error:', errorData.error || 'Unknown error');
+        throw new Error(errorData.error || 'Failed to update status');
       }
-    } catch (error) {
+
+      const responseData = await response.json();
+      console.log('Successfully updated vulnerability status:', responseData);
+
+      setVulnerabilities(prevVulns =>
+        prevVulns.map(vuln =>
+          vuln.id === vulnId ? { ...vuln, status: newStatus } : vuln
+        )
+      );
+    } catch (error: any) {
       console.error('Error updating vulnerability:', error);
-    }
-  };
-
-  const handleSaveNotes = async () => {
-    if (!selectedVuln) return;
-
-    setIsSaving(true);
-    setSaveStatus(null);
-
-    try {
-      const response = await fetch(`/api/vulnerabilities/${selectedVuln._id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notes: unsavedNotes }),
-      });
-
-      if (response.ok) {
-        const updatedVuln = await response.json();
-        setVulnerabilities(prevVulns =>
-          prevVulns.map(vuln =>
-            vuln._id === selectedVuln._id ? { ...vuln, notes: updatedVuln.notes } : vuln
-          )
-        );
-        setSaveStatus('saved');
-        setTimeout(() => setSaveStatus(null), 2000);
-      } else {
-        throw new Error('Failed to save notes');
-      }
-    } catch (error) {
-      console.error('Error saving notes:', error);
-      setSaveStatus('unsaved');
-    } finally {
-      setIsSaving(false);
+      alert(`Failed to update status: ${error.message}`);
     }
   };
 
@@ -339,56 +331,84 @@ export default function SubdomainDetails() {
 
   const toggleSelectionMode = () => {
     setIsSelectionMode(!isSelectionMode);
-    setSelectedVulns(new Set());
+    setSelectedVulnerabilities({});
   };
+
+  // Get the count of selected vulnerabilities
+  const selectedCount = Object.values(selectedVulnerabilities).filter(Boolean).length;
+  
+  // Check if all vulnerabilities are selected
+  const allSelected = filteredVulnerabilities.length > 0 && 
+    filteredVulnerabilities.every(vuln => selectedVulnerabilities[vuln.id]);
 
   const toggleSelectAll = () => {
-    if (selectedVulns.size === filteredVulnerabilities.length) {
-      setSelectedVulns(new Set());
+    if (allSelected) {
+      setSelectedVulnerabilities({});
     } else {
-      setSelectedVulns(new Set(filteredVulnerabilities.map(vuln => vuln._id)));
+      const newSelected: Record<string, boolean> = {};
+      filteredVulnerabilities.forEach(vuln => {
+        newSelected[vuln.id] = true;
+      });
+      setSelectedVulnerabilities(newSelected);
     }
   };
 
-  const toggleVulnSelection = (vulnId: string) => {
-    const newSelected = new Set(selectedVulns);
-    if (newSelected.has(vulnId)) {
-      newSelected.delete(vulnId);
-    } else {
-      newSelected.add(vulnId);
-    }
-    setSelectedVulns(newSelected);
+  const toggleVulnSelection = (vulnId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent event from bubbling
+    
+    setSelectedVulnerabilities(prev => ({
+      ...prev,
+      [vulnId]: !prev[vulnId]
+    }));
   };
 
   const handleDeleteSelected = async () => {
-    if (!confirm(`Are you sure you want to delete ${selectedVulns.size} selected vulnerabilities?`)) {
+    const selectedIds = Object.entries(selectedVulnerabilities)
+      .filter(([_, isSelected]) => isSelected)
+      .map(([id]) => id);
+
+    if (selectedIds.length === 0) {
+      alert('Please select at least one vulnerability to delete');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to delete ${selectedIds.length} vulnerabilities?`)) {
       return;
     }
 
     setIsDeleting(true);
+    
     try {
-      const response = await fetch(`/api/subdomains/${subdomainId}/vulnerabilities/bulk-delete`, {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          vulnerabilityIds: Array.from(selectedVulns)
-        })
+      console.log('Attempting to delete vulnerabilities:', selectedIds);
+      const response = await fetch('/api/vulnerabilities/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedIds }),
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to delete vulnerabilities');
+      const data = await response.json();
+      
+      if (response.ok) {
+        console.log('Deletion successful:', data);
+        // Update UI: remove deleted vulnerabilities
+        const remainingVulns = vulnerabilities.filter(vuln => !selectedIds.includes(vuln.id));
+        setVulnerabilities(remainingVulns);
+        // Clear selection state
+        setSelectedVulnerabilities({});
+        setIsSelectionMode(false);
+        
+        if (selectedVuln && selectedIds.includes(selectedVuln.id)) {
+          setSelectedVuln(null);
+        }
+        
+        alert(`Successfully deleted ${data.deleted || selectedIds.length} vulnerabilities`);
+      } else {
+        console.error('Failed to delete vulnerabilities:', data);
+        alert(data.error || 'Failed to delete vulnerabilities');
       }
-
-      setVulnerabilities(prevVulns =>
-        prevVulns.filter(vuln => !selectedVulns.has(vuln._id))
-      );
-      setSelectedVulns(new Set());
-      setIsSelectionMode(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error deleting vulnerabilities:', error);
-      alert('Failed to delete vulnerabilities');
+      alert(`Error deleting vulnerabilities: ${error.message || error}`);
     } finally {
       setIsDeleting(false);
     }
@@ -414,7 +434,7 @@ export default function SubdomainDetails() {
       const newVuln = await response.json();
       setVulnerabilities(prev => [newVuln, ...prev]);
       setShowAddVulnForm(false);
-      setNewVulnData({ type: '', severity: 'High' });
+      setNewVulnData({ type: '', severity: 'High', recreation_steps: '' });
     } catch (error) {
       console.error('Error adding vulnerability:', error);
       alert('Failed to add vulnerability');
@@ -443,7 +463,7 @@ export default function SubdomainDetails() {
                 Back to Project
               </button>
               <h1 className="text-xl font-semibold text-primary">
-                {subdomain?.name}
+                {subdomain?.hostname}
               </h1>
             </div>
 
@@ -522,10 +542,10 @@ export default function SubdomainDetails() {
                   bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOCIgdmlld0JveD0iMCAwIDEyIDgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xIDFMNiA2TDExIDEiIHN0cm9rZT0iI2ZmZmZmZiIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==')] 
                   bg-[length:12px_8px] bg-[right_16px_center] bg-no-repeat pr-12"
               >
-                <option value="All" className="bg-background text-foreground">All Severities</option>
-                <option value="High" className="bg-background text-foreground">High</option>
-                <option value="Medium" className="bg-background text-foreground">Medium</option>
-                <option value="Low" className="bg-background text-foreground">Low</option>
+                <option key="all-severities" value="All" className="bg-background text-foreground">All Severities</option>
+                <option key="high-severity" value="High" className="bg-background text-foreground">High</option>
+                <option key="medium-severity" value="Medium" className="bg-background text-foreground">Medium</option>
+                <option key="low-severity" value="Low" className="bg-background text-foreground">Low</option>
               </select>
               
               <select
@@ -537,10 +557,10 @@ export default function SubdomainDetails() {
                   bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOCIgdmlld0JveD0iMCAwIDEyIDgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xIDFMNiA2TDExIDEiIHN0cm9rZT0iI2ZmZmZmZiIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==')] 
                   bg-[length:12px_8px] bg-[right_16px_center] bg-no-repeat pr-12"
               >
-                <option value="All" className="bg-background text-foreground">All Statuses</option>
-                <option value="Not Yet Done" className="bg-background text-foreground">Not Yet Done</option>
-                <option value="Found" className="bg-background text-foreground">Found</option>
-                <option value="Not Found" className="bg-background text-foreground">Not Found</option>
+                <option key="all-statuses" value="All" className="bg-background text-foreground">All Statuses</option>
+                <option key="not-yet-done" value="Not Yet Done" className="bg-background text-foreground">Not Yet Done</option>
+                <option key="found" value="Found" className="bg-background text-foreground">Found</option>
+                <option key="not-found" value="Not Found" className="bg-background text-foreground">Not Found</option>
               </select>
             </div>
           </div>
@@ -561,9 +581,9 @@ export default function SubdomainDetails() {
                     className="text-[15px] font-medium text-foreground/70 hover:text-foreground 
                       transition-all duration-200"
                   >
-                    {selectedVulns.size === filteredVulnerabilities.length ? 'Deselect All' : 'Select All'}
+                    {allSelected ? 'Deselect All' : 'Select All'}
                   </button>
-                  {selectedVulns.size > 0 && (
+                  {selectedCount > 0 && (
                     <button
                       onClick={handleDeleteSelected}
                       disabled={isDeleting}
@@ -576,7 +596,7 @@ export default function SubdomainDetails() {
                           Deleting...
                         </>
                       ) : (
-                        `Delete (${selectedVulns.size})`
+                        `Delete (${selectedCount})`
                       )}
                     </button>
                   )}
@@ -604,13 +624,17 @@ export default function SubdomainDetails() {
           <div className="px-6 py-2 space-y-3">
             {filteredVulnerabilities.map((vuln) => (
               <div
-                key={vuln._id}
-                onClick={() => isSelectionMode ? toggleVulnSelection(vuln._id) : setSelectedVuln(vuln)}
+                key={vuln.id}
+                onClick={(e) => {
+                  if (!isSelectionMode) {
+                    setSelectedVuln(vuln);
+                  }
+                }}
                 className={`p-4 rounded-xl flex items-center justify-between 
                   transition-all duration-200 cursor-pointer
-                  ${isSelectionMode && selectedVulns.has(vuln._id)
+                  ${isSelectionMode && selectedVulnerabilities[vuln.id]
                     ? 'bg-primary/10 border border-primary/20' 
-                    : selectedVuln?._id === vuln._id && !isSelectionMode
+                    : selectedVuln?.id === vuln.id && !isSelectionMode
                     ? 'bg-white/5 border border-white/10' 
                     : vuln.severity === 'High'
                     ? 'bg-red-500/5 hover:bg-red-500/10 border border-red-500/20'
@@ -622,13 +646,14 @@ export default function SubdomainDetails() {
                 <div className="flex items-center gap-4 flex-1">
                   {isSelectionMode && (
                     <div
+                      onClick={(e) => toggleVulnSelection(vuln.id, e)}
                       className={`w-5 h-5 rounded-lg transition-all duration-200 flex items-center justify-center
-                        ${selectedVulns.has(vuln._id)
+                        ${selectedVulnerabilities[vuln.id]
                           ? 'bg-primary scale-100'
                           : 'border-2 border-white/10 hover:border-white/20'
                         }`}
                     >
-                      {selectedVulns.has(vuln._id) && (
+                      {selectedVulnerabilities[vuln.id] && (
                         <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
@@ -651,8 +676,8 @@ export default function SubdomainDetails() {
                 
                 <StatusBadge 
                   status={vuln.status} 
-                  onStatusChange={(newStatus) => handleStatusChange(vuln._id, newStatus)}
-                  badgeId={vuln._id}
+                  onStatusChange={(newStatus) => handleStatusChange(vuln.id, newStatus)}
+                  badgeId={vuln.id}
                   openStatusId={openStatusId}
                   setOpenStatusId={setOpenStatusId}
                 />
@@ -683,7 +708,7 @@ export default function SubdomainDetails() {
 
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-medium text-foreground/90">Notes</h3>
+                    <h3 className="text-lg font-medium text-foreground/90">Details</h3>
                     <div className="flex items-center space-x-2">
                       {isSaving && (
                         <span className="text-primary/70 text-sm flex items-center gap-2">
@@ -704,21 +729,37 @@ export default function SubdomainDetails() {
                       )}
                     </div>
                   </div>
-                  <textarea
-                    value={unsavedNotes}
-                    onChange={(e) => {
-                      const newNotes = e.target.value;
-                      setUnsavedNotes(newNotes);
-                      if (selectedVuln) {
-                        debouncedSave(selectedVuln._id, newNotes);
-                      }
-                    }}
-                    placeholder="Add your notes here..."
-                    className="w-full h-[calc(100vh-280px)] bg-black/20 border border-white/10 rounded-lg p-4 
-                      text-foreground placeholder-foreground/40
-                      focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/30
-                      transition-all duration-200 resize-none"
-                  />
+                  <div className="mt-4">
+                    <label className="block text-white text-sm font-medium mb-2">Notes</label>
+                    <textarea
+                      className="w-full h-32 bg-white/5 text-white rounded-xl p-4 focus:outline-none focus:ring-2 focus:ring-primary/50"
+                      placeholder="Add notes about this vulnerability..."
+                      value={unsavedNotes}
+                      onChange={(e) => {
+                        const newNotes = e.target.value;
+                        setUnsavedNotes(newNotes);
+                        if (selectedVuln) {
+                          debouncedSave(selectedVuln.id, { notes: newNotes });
+                        }
+                      }}
+                    ></textarea>
+                  </div>
+                  
+                  <div className="mt-4">
+                    <label className="block text-white text-sm font-medium mb-2">Recreation Steps</label>
+                    <textarea
+                      className="w-full h-32 bg-white/5 text-white rounded-xl p-4 focus:outline-none focus:ring-2 focus:ring-primary/50"
+                      placeholder="Add steps to recreate this vulnerability..."
+                      value={unsavedRecreationSteps}
+                      onChange={(e) => {
+                        const newSteps = e.target.value;
+                        setUnsavedRecreationSteps(newSteps);
+                        if (selectedVuln) {
+                          debouncedSave(selectedVuln.id, { recreation_steps: newSteps });
+                        }
+                      }}
+                    ></textarea>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -732,8 +773,8 @@ export default function SubdomainDetails() {
 
       {showScreenshot && subdomain && (
         <ScreenshotModal
-          url={getScreenshotUrl(subdomain.name)}
-          domain={subdomain.name}
+          url={getScreenshotUrl(subdomain.hostname)}
+          domain={subdomain.hostname}
           onClose={() => setShowScreenshot(false)}
         />
       )}
@@ -784,10 +825,22 @@ export default function SubdomainDetails() {
                     transition-all duration-200"
                   required
                 >
-                  <option value="High" className="bg-background">High</option>
-                  <option value="Medium" className="bg-background">Medium</option>
-                  <option value="Low" className="bg-background">Low</option>
+                  <option key="high" value="High" className="bg-background">High</option>
+                  <option key="medium" value="Medium" className="bg-background">Medium</option>
+                  <option key="low" value="Low" className="bg-background">Low</option>
                 </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2 text-foreground/70">Recreation Steps</label>
+                <textarea
+                  value={newVulnData.recreation_steps}
+                  onChange={(e) => setNewVulnData(prev => ({ ...prev, recreation_steps: e.target.value }))}
+                  className="w-full h-32 px-4 py-3 bg-black/40 border border-white/10 rounded-lg
+                    text-foreground placeholder-foreground/30
+                    focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/30
+                    transition-all duration-200 resize-none"
+                  placeholder="Enter steps to reproduce the vulnerability"
+                />
               </div>
               <div className="flex gap-3 pt-2">
                 <button

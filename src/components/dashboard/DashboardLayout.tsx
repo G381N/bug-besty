@@ -26,7 +26,7 @@ export default function DashboardLayout({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   const handleProjectSelect = (projectId: string) => {
-    const project = projects.find(p => p._id === projectId);
+    const project = projects.find(p => p.id === projectId);
     if (project) {
       onProjectSelect(project);
     }
@@ -38,7 +38,7 @@ export default function DashboardLayout({
         onCollapsedChange={setIsSidebarCollapsed}
         onNewProject={onNewProject}
         onProjectSelect={handleProjectSelect}
-        activeProjectId={selectedProject?._id || null}
+        activeProjectId={selectedProject?.id || null}
         isDeletingProject={isDeletingProject}
         onDeleteProject={onDeleteProject}
       />

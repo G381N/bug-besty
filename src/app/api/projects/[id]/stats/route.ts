@@ -1,8 +1,7 @@
-
 import { NextResponse } from 'next/server';
-import dbConnect from '@/lib/mongodb';
-import Subdomain from '@/models/Subdomain';
-import Vulnerability from '@/models/Vulnerability';
+import { getDocuments } from '@/lib/firestore';
+import { Subdomain } from '@/models/Subdomain';
+import { Vulnerability } from '@/models/Vulnerability';
 import { IVulnerability } from '@/types';
 
 export async function GET(
@@ -10,20 +9,41 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    await dbConnect();
+    const projectId = params?.id;
+    if (!projectId) {
+      return NextResponse.json(
+        { error: 'Project ID is required' },
+        { status: 400 }
+      );
+    }
     
     // Get all subdomains for the project
-    const subdomains = await Subdomain.find({ projectId: params.id });
-    const subdomainIds = subdomains.map(s => s._id);
-    
-    // Get all vulnerabilities grouped by subdomain
-    const vulnerabilities = await Vulnerability.find({
-      subdomainId: { $in: subdomainIds }
+    const subdomains = await getDocuments<Subdomain>('subdomains', {
+      fieldPath: 'projectId',
+      operator: '==',
+      value: projectId
     });
+    
+    const subdomainIds = subdomains.map(s => s.id);
+    
+    // Get all vulnerabilities for each subdomain
+    let allVulnerabilities: (Vulnerability & { id: string })[] = [];
+    
+    // Since Firestore doesn't support $in queries directly,
+    // we need to fetch vulnerabilities for each subdomain separately
+    for (const subdomainId of subdomainIds) {
+      const subdomainVulnerabilities = await getDocuments<Vulnerability>('vulnerabilities', {
+        fieldPath: 'subdomainId',
+        operator: '==',
+        value: subdomainId
+      });
+      
+      allVulnerabilities = [...allVulnerabilities, ...subdomainVulnerabilities];
+    }
 
     // Group vulnerabilities by subdomain
-    const vulnerabilitiesBySubdomain = vulnerabilities.reduce<Record<string, IVulnerability[]>>((acc, vuln) => {
-      const subdomainId = vuln.subdomainId.toString();
+    const vulnerabilitiesBySubdomain = allVulnerabilities.reduce<Record<string, (Vulnerability & { id: string })[]>>((acc, vuln) => {
+      const subdomainId = vuln.subdomainId;
       if (!acc[subdomainId]) {
         acc[subdomainId] = [];
       }
@@ -60,10 +80,10 @@ export async function GET(
     };
     
     return NextResponse.json(stats);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error fetching stats:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch project stats' }, 
+      { error: 'Failed to fetch project stats', details: error.message || 'Unknown error' }, 
       { status: 500 }
     );
   }

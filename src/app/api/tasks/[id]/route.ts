@@ -1,17 +1,26 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "../../auth/[...nextauth]/route";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { getTask } from "@/lib/backgroundTasks";
-import { connectToDatabase } from "@/lib/mongodb";
-import Project from "@/models/Project";
+import { db } from "@/lib/firebase";
+import { collection, query, where, getDocs } from "firebase/firestore";
+import { Session } from "next-auth";
+
+interface CustomSession extends Session {
+  user: {
+    id?: string;
+    name?: string;
+    email?: string;
+  };
+}
 
 export async function GET(
   req: Request,
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session) {
+    const session = await getServerSession(authOptions as any) as CustomSession | null;
+    if (!session || !session.user || !session.user.email) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -26,15 +35,20 @@ export async function GET(
     }
 
     // For security, verify this user owns the project associated with the task
-    await connectToDatabase();
-    
-    if (task.type === "subdomain_enumeration") {
-      const project = await Project.findById(task.data.projectId);
-      if (!project) {
+    if (task.type === "subdomain_enumeration" || task.type === "project_deletion") {
+      const projectQuery = query(
+        collection(db, "projects"),
+        where("id", "==", task.data.projectId)
+      );
+      const projectSnapshot = await getDocs(projectQuery);
+      
+      if (projectSnapshot.empty) {
         return NextResponse.json({ error: "Project not found" }, { status: 404 });
       }
       
-      if (project.owner.toString() !== session.user.id) {
+      const project = projectSnapshot.docs[0].data();
+      
+      if (project.owner !== session.user.email) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       }
     }
@@ -50,10 +64,10 @@ export async function GET(
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error fetching task:", error);
     return NextResponse.json(
-      { error: "Failed to fetch task status" },
+      { error: "Failed to fetch task status", details: error.message || "Unknown error" },
       { status: 500 }
     );
   }

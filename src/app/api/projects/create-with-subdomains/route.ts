@@ -1,22 +1,20 @@
 import { NextResponse } from 'next/server';
-import dbConnect from '@/lib/mongodb';
-import Project from '@/models/Project';
-import Subdomain from '@/models/Subdomain';
-import Vulnerability from '@/models/Vulnerability';
+import { getDocuments, getDocument } from '@/lib/firestore';
+import { Project, ProjectModel } from '@/models/Project';
+import { Subdomain, SubdomainModel } from '@/models/Subdomain';
+import { Vulnerability, VulnerabilityModel } from '@/models/Vulnerability';
 import { vulnerabilityTypes } from '@/constants/vulnerabilityTypes';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '../../auth/[...nextauth]/route';
 
 export async function POST(request: Request) {
   let project = null;
-  let createdSubdomains = [];
+  let createdSubdomains: any[] = [];
 
   try {
-    await dbConnect();
-    
     // Get the user session
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
+    if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     
@@ -30,11 +28,28 @@ export async function POST(request: Request) {
       }, { status: 400 });
     }
 
-    // Check if active project exists
-    const existingProject = await Project.findOne({ name, status: 'active' });
+    // Check if active project exists with same name
+    const existingProjects = await getDocuments<Project>('projects', [
+      {
+        fieldPath: 'name',
+        operator: '==',
+        value: name
+      },
+      {
+        fieldPath: 'status',
+        operator: '==',
+        value: 'active'
+      }
+    ]);
     
-    if (existingProject) {
-      const existingSubdomains = await Subdomain.find({ projectId: existingProject._id });
+    if (existingProjects.length > 0) {
+      const existingProject = existingProjects[0];
+      
+      const existingSubdomains = await getDocuments<Subdomain>('subdomains', {
+        fieldPath: 'projectId',
+        operator: '==',
+        value: existingProject.id
+      });
       
       if (existingSubdomains.length > 0) {
         return NextResponse.json({ 
@@ -43,42 +58,55 @@ export async function POST(request: Request) {
         }, { status: 409 });
       }
 
-      await Project.findByIdAndUpdate(existingProject._id, { status: 'archived' });
+      // Archive the existing project
+      await ProjectModel.update(existingProject.id, { status: 'archived' });
     }
 
-    // Create new project with userId
-    project = await Project.create({
+    // Create new project with owner
+    project = await ProjectModel.create({
       name,
-      mainDomain: name,
+      targetDomain: name,
       status: 'active',
-      userId: session.user.id
+      owner: session.user.email,
+      team: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     });
 
     // Process subdomains
-    const validSubdomains = subdomains.filter(subdomain => 
+    const validSubdomains = subdomains.filter((subdomain: string) => 
       subdomain && subdomain.trim().length > 0
     );
 
     // Create subdomains and vulnerabilities
     for (const subdomain of validSubdomains) {
-      const newSubdomain = await Subdomain.create({
-        projectId: project._id,
+      const newSubdomain = await SubdomainModel.create({
+        projectId: project.id,
         name: subdomain.trim(),
-        status: 'scanning'
+        status: 'scanning',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       });
 
       // Create vulnerabilities
-      await Promise.all(vulnerabilityTypes.map(vulnType => 
-        Vulnerability.create({
-          subdomainId: newSubdomain._id,
+      for (const vulnType of vulnerabilityTypes) {
+        await VulnerabilityModel.create({
+          subdomainId: newSubdomain.id,
           type: vulnType.type,
           severity: vulnType.severity,
-          status: 'Not Yet Done'
-        })
-      ));
+          status: 'Not Yet Done',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
 
       createdSubdomains.push(newSubdomain);
     }
+
+    // Update project with subdomain count
+    await ProjectModel.update(project.id, {
+      subdomainsCount: validSubdomains.length
+    });
 
     return NextResponse.json({
       project,
@@ -87,16 +115,8 @@ export async function POST(request: Request) {
     });
 
   } catch (error: any) {
-    // Cleanup if something went wrong
-    if (project) {
-      await Project.findByIdAndDelete(project._id);
-      
-      for (const subdomain of createdSubdomains) {
-        await Vulnerability.deleteMany({ subdomainId: subdomain._id });
-        await Subdomain.findByIdAndDelete(subdomain._id);
-      }
-    }
-
+    console.error('Error creating project with subdomains:', error);
+    
     return NextResponse.json({ 
       error: 'Failed to create project with subdomains',
       details: error.message || 'Unknown error occurred'

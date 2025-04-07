@@ -1,64 +1,73 @@
-import mongoose from 'mongoose';
-import bcrypt from 'bcryptjs';
+import { 
+  createDocument, 
+  getDocument, 
+  getDocuments, 
+  updateDocument,
+  deleteDocument 
+} from '@/lib/firestore';
 
-const userSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: [true, 'Name is required'],
-    trim: true
-  },
-  email: {
-    type: String,
-    required: [true, 'Email is required'],
-    unique: true,
-    trim: true,
-    lowercase: true,
-    match: [/^\S+@\S+\.\S+$/, 'Please enter a valid email'],
-    index: true
-  },
-  password: {
-    type: String,
-    required: [true, 'Password is required'],
-    minlength: [6, 'Password must be at least 6 characters']
-  },
-  role: {
-    type: String,
-    enum: ['user', 'admin'],
-    default: 'user'
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  }
-}, {
-  timestamps: true,
-  collection: 'users' // Explicitly set collection name
-});
+// Define user interface
+export interface User {
+  name: string;
+  email: string;
+  role: 'user' | 'admin';
+  onboarding?: {
+    completed: boolean;
+    answers: any;
+  };
+  createdAt: Date;
+  updatedAt: Date;
+}
 
-// Create a compound index for commonly queried fields
-userSchema.index({ email: 1, createdAt: -1 });
+// Collection name
+const COLLECTION_NAME = 'users';
 
-// Add a pre-save hook to hash the password
-userSchema.pre('save', async function(next) {
-  // Only hash the password if it's modified (or new)
-  if (!this.isModified('password')) return next();
+// User model methods
+export const UserModel = {
+  // Create a new user
+  async create(userData: Omit<User, 'createdAt' | 'updatedAt'>): Promise<User & { id: string }> {
+    const now = new Date();
+    const user: User = {
+      ...userData,
+      role: userData.role || 'user',
+      createdAt: now,
+      updatedAt: now
+    };
+    
+    const id = await createDocument<User>(COLLECTION_NAME, user);
+    return { id, ...user };
+  },
   
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error);
+  // Get a user by ID
+  async findById(id: string): Promise<(User & { id: string }) | null> {
+    return getDocument<User>(COLLECTION_NAME, id);
+  },
+  
+  // Find a user by email
+  async findByEmail(email: string): Promise<(User & { id: string }) | null> {
+    const users = await getDocuments<User>(COLLECTION_NAME, {
+      fieldPath: 'email',
+      operator: '==',
+      value: email
+    });
+    
+    return users.length > 0 ? users[0] : null;
+  },
+  
+  // Update a user
+  async update(id: string, userData: Partial<User>): Promise<void> {
+    const updateData = {
+      ...userData,
+      updatedAt: new Date()
+    };
+    
+    await updateDocument<User>(COLLECTION_NAME, id, updateData);
+  },
+  
+  // Delete a user
+  async delete(id: string): Promise<void> {
+    await deleteDocument(COLLECTION_NAME, id);
   }
-});
+};
 
-// Delete password when converting to JSON
-userSchema.set('toJSON', {
-  transform: function(doc, ret) {
-    delete ret.password;
-    return ret;
-  }
-});
-
-const User = mongoose.models.User || mongoose.model('User', userSchema);
-export default User; 
+export default UserModel; 

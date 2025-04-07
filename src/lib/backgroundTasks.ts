@@ -1,11 +1,6 @@
-import { createClient } from "@vercel/kv";
 import { v4 as uuidv4 } from "uuid";
-
-// Initialize Vercel KV storage client
-const kv = createClient({
-  url: process.env.KV_REST_API_URL,
-  token: process.env.KV_REST_API_TOKEN,
-});
+import { addDoc, updateDoc, getDoc, doc, collection, query, where, getDocs } from "firebase/firestore";
+import { db } from "./firebase";
 
 // Task status constants
 export const TASK_STATUS = {
@@ -27,10 +22,14 @@ export interface Task {
   updatedAt: number;
 }
 
+// Collection name
+const TASKS_COLLECTION = 'tasks';
+
 // Create a new task
 export async function createTask(type: string, data: any): Promise<Task> {
+  const taskId = uuidv4();
   const task: Task = {
-    id: uuidv4(),
+    id: taskId,
     type,
     status: TASK_STATUS.PENDING,
     data,
@@ -39,9 +38,11 @@ export async function createTask(type: string, data: any): Promise<Task> {
     progress: 0,
   };
 
-  await kv.set(`task:${task.id}`, JSON.stringify(task));
-  // Add to processing queue
-  await kv.lpush("task_queue", task.id);
+  // Store task in Firestore
+  await addDoc(collection(db, TASKS_COLLECTION), task);
+  
+  // For more advanced queue processing, you'd implement a Cloud Function 
+  // or use Firebase Cloud Tasks/Pub Sub
   
   return task;
 }
@@ -52,10 +53,20 @@ export async function updateTask(
   status: string, 
   updates: Partial<Task> = {}
 ): Promise<Task> {
-  const taskStr = await kv.get(`task:${taskId}`);
-  if (!taskStr) throw new Error(`Task ${taskId} not found`);
+  const taskQuery = query(
+    collection(db, TASKS_COLLECTION),
+    where('id', '==', taskId)
+  );
   
-  const task = JSON.parse(taskStr as string) as Task;
+  const tasksSnapshot = await getDocs(taskQuery);
+  
+  if (tasksSnapshot.empty) {
+    throw new Error(`Task ${taskId} not found`);
+  }
+  
+  const taskDoc = tasksSnapshot.docs[0];
+  const task = taskDoc.data() as Task;
+  
   const updatedTask = {
     ...task,
     ...updates,
@@ -63,15 +74,24 @@ export async function updateTask(
     updatedAt: Date.now(),
   };
   
-  await kv.set(`task:${taskId}`, JSON.stringify(updatedTask));
+  await updateDoc(doc(db, TASKS_COLLECTION, taskDoc.id), updatedTask);
   return updatedTask;
 }
 
 // Get a task by ID
 export async function getTask(taskId: string): Promise<Task | null> {
-  const taskStr = await kv.get(`task:${taskId}`);
-  if (!taskStr) return null;
-  return JSON.parse(taskStr as string) as Task;
+  const taskQuery = query(
+    collection(db, TASKS_COLLECTION),
+    where('id', '==', taskId)
+  );
+  
+  const tasksSnapshot = await getDocs(taskQuery);
+  
+  if (tasksSnapshot.empty) {
+    return null;
+  }
+  
+  return tasksSnapshot.docs[0].data() as Task;
 }
 
 // Update progress of a task

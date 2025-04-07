@@ -1,12 +1,10 @@
 import { NextResponse } from 'next/server';
 import { enumerationConfig } from '@/config/enumeration-config';
-import dbConnect from '@/lib/mongodb';
-import Project from '@/models/Project';
-import Subdomain from '@/models/Subdomain';
-import Vulnerability from '@/models/Vulnerability';
+import { ProjectModel } from '@/models/Project';
+import { SubdomainModel } from '@/models/Subdomain';
+import { VulnerabilityModel } from '@/models/Vulnerability';
 import { vulnerabilityTypes } from '@/constants/vulnerabilityTypes';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '../auth/[...nextauth]/route';
 
 async function fetchSubdomainsFromCertspotter(domain: string) {
   try {
@@ -77,8 +75,8 @@ async function fetchSubdomainsFromCensys(domain: string) {
 
 export async function POST(request: Request) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
+    const session = await getServerSession();
+    if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -90,14 +88,13 @@ export async function POST(request: Request) {
       );
     }
 
-    await dbConnect();
-
-    // Create new project
-    const project = await Project.create({
+    // Create new project using Firestore
+    const project = await ProjectModel.create({
       name: domain,
-      mainDomain: domain,
-      userId: session.user.id,
-      status: 'active'
+      targetDomain: domain,
+      owner: session.user.email,
+      team: [],
+      status: 'active',
     });
 
     // Fetch subdomains from different sources
@@ -116,27 +113,36 @@ export async function POST(request: Request) {
     // Create subdomains and vulnerabilities
     const createdSubdomains = [];
     for (const subdomain of allSubdomains) {
-      const newSubdomain = await Subdomain.create({
-        projectId: project._id,
+      const newSubdomain = await SubdomainModel.create({
+        projectId: project.id,
         name: subdomain.trim(),
-        status: 'scanning'
       });
 
       // Create vulnerabilities for each subdomain
       await Promise.all(vulnerabilityTypes.map(vulnType =>
-        Vulnerability.create({
-          subdomainId: newSubdomain._id,
+        VulnerabilityModel.create({
+          subdomainId: newSubdomain.id,
           type: vulnType.type,
-          severity: vulnType.severity,
-          status: 'Not Yet Done'
+          severity: vulnType.severity as 'High' | 'Medium' | 'Low' | 'Critical',
         })
       ));
 
       createdSubdomains.push(newSubdomain);
     }
 
+    // Update project with subdomain count
+    await ProjectModel.update(project.id, {
+      subdomainsCount: createdSubdomains.length,
+    });
+
     return NextResponse.json({
-      project,
+      project: {
+        id: project.id,
+        name: project.name,
+        targetDomain: project.targetDomain,
+        status: project.status,
+        subdomainsCount: createdSubdomains.length,
+      },
       subdomainsCount: createdSubdomains.length,
       message: 'Enumeration completed successfully'
     });

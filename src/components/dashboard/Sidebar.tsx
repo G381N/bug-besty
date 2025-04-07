@@ -3,8 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from 'next/navigation';
-import { Project } from '@/types/Project'; // Create this type if not exists
-import { IProject } from '@/types';
+import { Project } from '@/types/Project';
 
 interface SidebarProps {
   onCollapsedChange?: (collapsed: boolean) => void;
@@ -18,7 +17,7 @@ interface SidebarProps {
 export default function Sidebar({ onCollapsedChange, onNewProject, onProjectSelect, activeProjectId, isDeletingProject, onDeleteProject }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [switchingProject, setSwitchingProject] = useState<string | null>(null);
-  const [projects, setProjects] = useState<IProject[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const previousActiveId = useRef(activeProjectId);
   const router = useRouter();
   const pathname = usePathname();
@@ -69,23 +68,41 @@ export default function Sidebar({ onCollapsedChange, onNewProject, onProjectSele
   };
 
   const deleteProject = async (projectId: string) => {
+    // Ask for confirmation
+    if (!confirm('Are you sure you want to delete this project? This will delete all associated subdomains and vulnerability data.')) {
+      return;
+    }
+    
+    // Immediately update UI to remove the project
+    setProjects(currentProjects => currentProjects.filter(p => p.id !== projectId));
+    
     try {
+      // Trigger deletion in the background
       const response = await fetch(`/api/projects/${projectId}`, {
         method: 'DELETE',
       });
       
       if (response.ok) {
-        await fetchProjects();
+        // Handle navigation if project was active
         if (projectId === activeProjectId) {
-          const remainingProjects = projects.filter(p => p._id !== projectId);
+          const remainingProjects = projects.filter(p => p.id !== projectId);
           if (remainingProjects.length > 0) {
-            router.push(`/dashboard?project=${remainingProjects[0]._id}`);
+            router.push(`/dashboard?project=${remainingProjects[0].id}`);
           } else {
             router.push('/dashboard');
           }
         }
+        
+        // Refresh the page to ensure all UI elements are properly updated
+        window.location.reload();
+      } else {
+        // If deletion fails, refresh the projects list to restore the UI
+        await fetchProjects();
+        console.error('Failed to delete project:', await response.text());
       }
     } catch (error) {
+      // If an error occurs, refresh the projects list to restore the UI
+      await fetchProjects();
       console.error('Failed to delete project:', error);
     }
   };
@@ -156,17 +173,17 @@ export default function Sidebar({ onCollapsedChange, onNewProject, onProjectSele
             <div className="space-y-1">
               {projects.map((project) => (
                 <div
-                  key={project._id}
+                  key={project.id}
                   className={`group relative flex items-center justify-between p-2 rounded-lg cursor-pointer
                     transition-all duration-200
-                    ${project._id === activeProjectId 
+                    ${project.id === activeProjectId 
                       ? 'bg-primary/20 text-primary border border-primary/20' 
                       : 'hover:bg-white/5 border border-transparent hover:border-white/10'
                     }`}
-                  onClick={() => handleProjectClick(project._id)}
+                  onClick={() => handleProjectClick(project.id)}
                 >
                   <div className="flex items-center space-x-2 overflow-hidden">
-                    {isDeletingProject === project._id ? (
+                    {isDeletingProject === project.id ? (
                       <div className="w-2 h-2">
                         <div className="w-2 h-2 rounded-full border border-red-500/60 border-t-transparent animate-spin" />
                       </div>
@@ -183,11 +200,11 @@ export default function Sidebar({ onCollapsedChange, onNewProject, onProjectSele
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        onDeleteProject(project._id);
+                        onDeleteProject(project.id);
                       }}
-                      disabled={isDeletingProject === project._id}
+                      disabled={isDeletingProject === project.id}
                       className={`opacity-0 group-hover:opacity-100 p-1 hover:bg-white/10 rounded transition-all
-                        ${isDeletingProject === project._id ? 'cursor-not-allowed opacity-50' : ''}`}
+                        ${isDeletingProject === project.id ? 'cursor-not-allowed opacity-50' : ''}`}
                     >
                       <svg
                         className="w-4 h-4 text-red-500"

@@ -1,52 +1,84 @@
-import mongoose from 'mongoose';
+import { 
+  createDocument, 
+  getDocument, 
+  getDocuments, 
+  updateDocument,
+  deleteDocument 
+} from '@/lib/firestore';
 
-const projectSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: true,
-    trim: true
+// Define project interface
+export interface Project {
+  name: string;
+  targetDomain: string;
+  owner: string; // User ID in Firestore
+  team: string[]; // Array of User IDs
+  status: 'initializing' | 'active' | 'archived' | 'deleting';
+  enumerationTaskId?: string;
+  deletionTaskId?: string;
+  subdomainsCount: number;
+  vulnerabilitiesFound: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// Collection name
+const COLLECTION_NAME = 'projects';
+
+// Project model methods
+export const ProjectModel = {
+  // Create a new project
+  async create(projectData: Omit<Project, 'subdomainsCount' | 'vulnerabilitiesFound' | 'createdAt' | 'updatedAt'>): Promise<Project & { id: string }> {
+    const now = new Date();
+    const project: Project = {
+      ...projectData,
+      status: projectData.status || 'active',
+      subdomainsCount: 0,
+      vulnerabilitiesFound: 0,
+      createdAt: now,
+      updatedAt: now
+    };
+    
+    const id = await createDocument<Project>(COLLECTION_NAME, project);
+    return { id, ...project };
   },
-  targetDomain: {
-    type: String,
-    required: true,
-    trim: true,
-    lowercase: true
+  
+  // Get a project by ID
+  async findById(id: string): Promise<(Project & { id: string }) | null> {
+    return getDocument<Project>(COLLECTION_NAME, id);
   },
-  owner: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
+  
+  // Find projects by owner
+  async findByOwner(ownerId: string): Promise<(Project & { id: string })[]> {
+    return getDocuments<Project>(COLLECTION_NAME, {
+      fieldPath: 'owner',
+      operator: '==',
+      value: ownerId
+    });
   },
-  team: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  }],
-  status: {
-    type: String,
-    enum: ['initializing', 'active', 'archived'],
-    default: 'active'
+  
+  // Find projects by team member
+  async findByTeamMember(userId: string): Promise<(Project & { id: string })[]> {
+    return getDocuments<Project>(COLLECTION_NAME, {
+      fieldPath: 'team',
+      operator: 'array-contains',
+      value: userId
+    });
   },
-  enumerationTaskId: {
-    type: String
+  
+  // Update a project
+  async update(id: string, projectData: Partial<Project>): Promise<void> {
+    const updateData = {
+      ...projectData,
+      updatedAt: new Date()
+    };
+    
+    await updateDocument<Project>(COLLECTION_NAME, id, updateData);
   },
-  subdomainsCount: {
-    type: Number,
-    default: 0
-  },
-  vulnerabilitiesFound: {
-    type: Number,
-    default: 0
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
+  
+  // Delete a project
+  async delete(id: string): Promise<void> {
+    await deleteDocument(COLLECTION_NAME, id);
   }
-}, {
-  timestamps: true
-});
+};
 
-// Update the index to include userId for proper uniqueness per user
-projectSchema.index({ name: 1, status: 1, userId: 1 }, { unique: true });
-
-const Project = mongoose.models.Project || mongoose.model('Project', projectSchema);
-export default Project; 
+export default ProjectModel; 

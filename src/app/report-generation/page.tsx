@@ -8,22 +8,23 @@ import { generateReport } from '@/services/reportGenerator';
 import { saveAs } from 'file-saver';
 
 interface Project {
-  _id: string;
+  id: string;
   name: string;
 }
 
 interface Vulnerability {
-  _id: string;
+  id: string;
   type: string;
   status: string;
-  severity: 'High' | 'Medium' | 'Low';
+  severity: 'High' | 'Medium' | 'Low' | 'Critical';
   notes?: string;
+  recreation_steps?: string;
   updatedAt: string;
   subdomainId: string;
 }
 
 interface Subdomain {
-  _id: string;
+  id: string;
   name: string;
   projectId: string;
 }
@@ -84,11 +85,11 @@ export default function ReportGeneration() {
         setLoadingStage(`Fetching vulnerabilities for ${subdomain.name}...`);
         setLoadingProgress(30 + Math.floor((i / subdomainsData.length) * 60));
         
-        const vulnsResponse = await fetch(`/api/subdomains/${subdomain._id}/vulnerabilities`);
+        const vulnsResponse = await fetch(`/api/subdomains/${subdomain.id}/vulnerabilities`);
         const vulnsData = await vulnsResponse.json();
         const foundVulns = vulnsData.filter((v: Vulnerability) => v.status === 'Found');
         if (foundVulns.length > 0) {
-          vulnsMap[subdomain._id] = foundVulns;
+          vulnsMap[subdomain.id] = foundVulns;
         }
       }
       
@@ -113,16 +114,22 @@ export default function ReportGeneration() {
     try {
       setIsLoadingNotes(true);
       let combinedNotes = '';
+      let combinedReproductionSteps = '';
 
       for (const [subdomainId, vulns] of Object.entries(vulnerabilities)) {
-        const subdomain = subdomains.find(s => s._id === subdomainId);
+        const subdomain = subdomains.find(s => s.id === subdomainId);
         if (subdomain) {
+          // Add subdomain section to notes
           combinedNotes += `\n## ${subdomain.name}\n\n`;
+          
+          // Add subdomain section to reproduction steps if we find any
+          let subdomainHasReproSteps = false;
+          let subdomainReproSteps = `\n## ${subdomain.name}\n\n`;
           
           for (const vuln of vulns) {
             try {
-              // Fetch detailed vulnerability info including notes
-              const response = await fetch(`/api/vulnerabilities/${vuln._id}`);
+              // Fetch detailed vulnerability info
+              const response = await fetch(`/api/vulnerabilities/${vuln.id}`);
               
               if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -130,22 +137,35 @@ export default function ReportGeneration() {
               
               const vulnDetails = await response.json();
               
+              // Add notes for this vulnerability
               if (vulnDetails && vulnDetails.notes) {
                 combinedNotes += `### ${vuln.type} (${vuln.severity})\n`;
                 combinedNotes += `${vulnDetails.notes}\n\n`;
               }
+              
+              // Add reproduction steps for this vulnerability
+              if (vulnDetails && vulnDetails.recreation_steps) {
+                subdomainHasReproSteps = true;
+                subdomainReproSteps += `### ${vuln.type} (${vuln.severity})\n`;
+                subdomainReproSteps += `${vulnDetails.recreation_steps}\n\n`;
+              }
             } catch (vulnError) {
-              console.error(`Error fetching vulnerability ${vuln._id}:`, vulnError);
+              console.error(`Error fetching vulnerability ${vuln.id}:`, vulnError);
               // Continue with other vulnerabilities even if one fails
               continue;
             }
+          }
+          
+          // Only add reproduction steps for this subdomain if at least one vulnerability has steps
+          if (subdomainHasReproSteps) {
+            combinedReproductionSteps += subdomainReproSteps;
           }
         }
       }
 
       setFormData(prev => ({
-        ...prev,
-        additionalNotes: combinedNotes.trim()
+        additionalNotes: combinedNotes.trim(),
+        reproductionSteps: combinedReproductionSteps.trim() || prev.reproductionSteps
       }));
     } catch (error) {
       console.error('Error loading vulnerability notes:', error);
@@ -180,7 +200,7 @@ export default function ReportGeneration() {
       
       if (data.length === 1) {
         // If there's only one project, select it and start scanning immediately
-        setSelectedProject(data[0]._id);
+        setSelectedProject(data[0].id);
         // Note: We don't need to call fetchSubdomainsAndVulnerabilities() here
         // because the useEffect hook will trigger it when selectedProject changes
       } else {
@@ -218,7 +238,7 @@ export default function ReportGeneration() {
     setLoadingProgress(0);
     
     try {
-      const project = projects.find(p => p._id === selectedProject);
+      const project = projects.find(p => p.id === selectedProject);
       
       setLoadingProgress(20);
       setLoadingStage('Processing vulnerability data...');
@@ -226,7 +246,7 @@ export default function ReportGeneration() {
       const reportData = {
         projectName: project?.name || '',
         vulnerabilities: Object.entries(vulnerabilities).map(([subdomainId, vulns]) => ({
-          subdomain: subdomains.find(s => s._id === subdomainId)?.name || '',
+          subdomain: subdomains.find(s => s.id === subdomainId)?.name || '',
           vulns: vulns.map(v => ({
             type: v.type,
             severity: v.severity,
@@ -369,7 +389,7 @@ export default function ReportGeneration() {
               >
                 <option value="">Select a project</option>
                 {projects.map(project => (
-                  <option key={project._id} value={project._id}>
+                  <option key={project.id} value={project.id}>
                     {project.name}
                   </option>
                 ))}
@@ -412,7 +432,7 @@ export default function ReportGeneration() {
                   {/* Show vulnerabilities or placeholder */}
                   {Object.keys(vulnerabilities).length > 0 ? (
                     Object.entries(vulnerabilities).map(([subdomainId, vulns]) => {
-                      const subdomain = subdomains.find(s => s._id === subdomainId);
+                      const subdomain = subdomains.find(s => s.id === subdomainId);
                       return (
                         <motion.div 
                           key={subdomainId} 
@@ -429,7 +449,7 @@ export default function ReportGeneration() {
                           <div className="space-y-2">
                             {vulns.map(vuln => (
                               <motion.div 
-                                key={vuln._id} 
+                                key={vuln.id} 
                                 className="flex items-center justify-between p-3 bg-black/20 rounded-lg hover:bg-black/30 transition-colors"
                                 whileHover={{ x: 5 }}
                               >
@@ -468,23 +488,63 @@ export default function ReportGeneration() {
             )}
 
             {/* Reproduction Steps */}
-            <div className="space-y-2">
+            <div className="space-y-2 relative">
               <label className="block text-sm font-medium text-primary flex items-center gap-2">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 Reproduction Steps
+                {isLoadingNotes && (
+                  <motion.div
+                    className="ml-2 text-primary/60 text-sm flex items-center gap-2"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <div className="w-3 h-3 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
+                    <span>Loading steps...</span>
+                  </motion.div>
+                )}
               </label>
-              <textarea
-                value={formData.reproductionSteps}
-                onChange={(e) => setFormData(prev => ({ ...prev, reproductionSteps: e.target.value }))}
-                className="w-full h-32 px-4 py-3 rounded-xl bg-black/50 border border-primary/20 
-                  text-white focus:border-primary focus:ring-2 focus:ring-primary/20 
-                  transition-all duration-300 resize-none"
-                placeholder="Describe how to reproduce the vulnerabilities..."
-                required
-              />
+              <div className="relative">
+                <textarea
+                  value={formData.reproductionSteps}
+                  onChange={(e) => setFormData(prev => ({ ...prev, reproductionSteps: e.target.value }))}
+                  className={`w-full h-32 px-4 py-3 rounded-xl bg-black/50 border border-primary/20 
+                    text-white focus:border-primary focus:ring-2 focus:ring-primary/20 
+                    transition-all duration-300 resize-none
+                    ${isLoadingNotes ? 'opacity-50' : ''}`}
+                  placeholder="Describe how to reproduce the vulnerabilities..."
+                  disabled={isLoadingNotes}
+                />
+                {isLoadingNotes && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <motion.div 
+                      className="w-full h-1 bg-black/20 overflow-hidden"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: 0.3 }}
+                    >
+                      <motion.div
+                        className="h-full bg-gradient-to-r from-primary/30 via-primary to-primary/30"
+                        style={{ 
+                          width: '30%',
+                          filter: "drop-shadow(0 0 6px var(--color-primary))"
+                        }}
+                        animate={{
+                          x: ["0%", "250%"]
+                        }}
+                        transition={{
+                          duration: 2,
+                          repeat: Infinity,
+                          ease: "easeInOut"
+                        }}
+                      />
+                    </motion.div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Evidence Upload */}

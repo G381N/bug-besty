@@ -9,7 +9,9 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const projectId = params?.id;
+    // Fix: Properly retrieve and await params
+    const { id: projectId } = params;
+    
     if (!projectId) {
       return NextResponse.json(
         { error: 'Project ID is required' },

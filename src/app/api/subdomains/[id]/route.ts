@@ -10,7 +10,8 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const subdomainId = params.id;
+    const { id: subdomainId } = params;
+    
     if (!subdomainId) {
       return NextResponse.json(
         { error: 'Subdomain ID is required' },
@@ -66,7 +67,8 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const subdomainId = params?.id;
+    const { id: subdomainId } = params;
+    
     if (!subdomainId) {
       return NextResponse.json(
         { error: 'Subdomain ID is required' },

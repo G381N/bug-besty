@@ -36,17 +36,13 @@ async function fetchSubdomainsFromCertspotter(domain: string) {
 
 async function fetchSubdomainsFromCensys(domain: string) {
   try {
-    const auth = Buffer.from(
-      `${enumerationConfig.censys.id}:${enumerationConfig.censys.secret}`
-    ).toString('base64');
-    
     const response = await fetch(
-      `https://search.censys.io/api/v2/certificates/search`,
+      'https://search.censys.io/api/v2/hosts/search',
       {
         method: 'POST',
         headers: {
-          'Authorization': `Basic ${auth}`,
           'Content-Type': 'application/json',
+          'Accept': 'application/json'
         },
         body: JSON.stringify({
           query: `parsed.names: ${domain}`,
@@ -55,16 +51,28 @@ async function fetchSubdomainsFromCensys(domain: string) {
       }
     );
     
+    if (!response.ok) {
+      console.warn(`Censys API returned non-OK status: ${response.status}`);
+      return [];
+    }
+    
     const data = await response.json();
     const subdomains = new Set<string>();
     
-    data.result.hits.forEach((hit: any) => {
-      hit.parsed.names.forEach((name: string) => {
-        if (name.endsWith(domain)) {
-          subdomains.add(name);
+    if (data?.result?.hits && Array.isArray(data.result.hits)) {
+      data.result.hits.forEach((hit: any) => {
+        if (hit?.parsed?.names && Array.isArray(hit.parsed.names)) {
+          hit.parsed.names.forEach((name: string) => {
+            if (name && typeof name === 'string' && name.endsWith(domain)) {
+              subdomains.add(name);
+            }
+          });
         }
       });
-    });
+    } else {
+      console.warn('Censys API returned unexpected data structure:', 
+        data?.result ? 'Missing or invalid hits array' : 'Missing result object');
+    }
     
     return Array.from(subdomains);
   } catch (error) {

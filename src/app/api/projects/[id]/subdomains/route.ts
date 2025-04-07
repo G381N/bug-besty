@@ -4,7 +4,8 @@ import { Subdomain } from '@/models/Subdomain';
 
 export async function GET(request: Request, { params }: { params: { id: string } }) {
   try {
-    const projectId = params?.id;
+    const { id: projectId } = params;
+    
     if (!projectId) {
       return NextResponse.json(
         { error: 'Project ID is required' },

@@ -8,7 +8,7 @@ export async function PATCH(
 ) {
   try {
     const data = await request.json();
-    const vulnerabilityId = params.id;
+    const { id: vulnerabilityId } = params;
     
     if (!vulnerabilityId) {
       return NextResponse.json(
@@ -127,7 +127,7 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const vulnerabilityId = params.id;
+    const { id: vulnerabilityId } = params;
     
     if (!vulnerabilityId) {
       return NextResponse.json(

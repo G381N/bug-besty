@@ -19,22 +19,16 @@ const API_KEYS = {
   SHODAN: process.env.NEXT_PUBLIC_SHODAN_API_KEY,
 };
 
-const API_SOURCES = [
+// Define API source handler type
+type ApiHandler = (domain: string) => Promise<string[]>;
+
+// Define API sources
+const API_SOURCES: Array<{ name: string; handler: ApiHandler }> = [
   { name: "securitytrails", handler: fetchFromSecurityTrails },
   { name: "censys", handler: fetchFromCensys },
   { name: "certspotter", handler: fetchFromCertSpotter },
-  { name: "binaryedge", handler: fetchFromBinaryEdge },
-  { name: "builtwith", handler: fetchFromBuiltWith },
-  { name: "fofa", handler: fetchFromFofa },
-  { name: "fullhunt", handler: fetchFromFullHunt },
-  { name: "github", handler: fetchFromGithub },
-  { name: "intelx", handler: fetchFromIntelX },
-  { name: "leakix", handler: fetchFromLeakIX },
-  { name: "netlas", handler: fetchFromNetlas },
-  { name: "bevigil", handler: fetchFromBeVigil },
-  { name: "chaos", handler: fetchFromChaos },
-  { name: "shodan", handler: fetchFromShodan },
-  { name: "crtsh", handler: fetchFromCrtSh },
+  { name: "crtsh", handler: fetchFromCrtSh }
+  // Add more handlers as they are implemented
 ];
 
 // Main enumeration function that processes APIs in chunks
@@ -42,7 +36,7 @@ export async function enumerateSubdomains(
   domain: string,
   startFrom: number = 0,
   chunkSize: number = 5
-) {
+): Promise<{ subdomains: string[]; completedApis: number }> {
   const results: string[] = [];
   const endAt = Math.min(startFrom + chunkSize, API_SOURCES.length);
   
@@ -72,7 +66,7 @@ export async function enumerateSubdomains(
 }
 
 // Implementation of individual API handlers
-async function fetchFromSecurityTrails(domain: string) {
+async function fetchFromSecurityTrails(domain: string): Promise<string[]> {
   if (!API_KEYS.SECURITYTRAILS) return [];
   
   try {
@@ -87,17 +81,17 @@ async function fetchFromSecurityTrails(domain: string) {
     );
     
     if (response.data && response.data.subdomains) {
-      return response.data.subdomains.map(sub => `${sub}.${domain}`);
+      return response.data.subdomains.map((sub: string) => `${sub}.${domain}`);
     }
     return [];
-  } catch (error) {
+  } catch (error: any) {
     console.error("SecurityTrails API error:", error.message);
     return [];
   }
 }
 
 // Implement other API handlers similarly
-async function fetchFromCensys(domain: string) {
+async function fetchFromCensys(domain: string): Promise<string[]> {
   if (!API_KEYS.CENSYS_ID || !API_KEYS.CENSYS_SECRET) return [];
   
   try {
@@ -117,11 +111,11 @@ async function fetchFromCensys(domain: string) {
       }
     );
     
-    const subdomains = [];
+    const subdomains: string[] = [];
     if (response.data && response.data.results) {
-      response.data.results.forEach(result => {
+      response.data.results.forEach((result: any) => {
         if (result.parsed && result.parsed.names) {
-          result.parsed.names.forEach(name => {
+          result.parsed.names.forEach((name: string) => {
             if (name.endsWith(domain) && name !== domain) {
               subdomains.push(name);
             }
@@ -131,28 +125,65 @@ async function fetchFromCensys(domain: string) {
     }
     
     return subdomains;
-  } catch (error) {
+  } catch (error: any) {
     console.error("Censys API error:", error.message);
     return [];
   }
 }
 
-// Implement other API functions similarly
-// ...
+// Add the implementation for fetchFromCertSpotter after fetchFromCensys
+async function fetchFromCertSpotter(domain: string): Promise<string[]> {
+  if (!API_KEYS.CERTSPOTTER) return [];
+  
+  try {
+    const response = await axios.get(
+      `https://api.certspotter.com/v1/issuances`,
+      {
+        params: {
+          domain,
+          include_subdomains: 'true',
+          expand: 'dns_names',
+        },
+        headers: {
+          'Authorization': `Bearer ${API_KEYS.CERTSPOTTER}`,
+        },
+        timeout: 10000,
+      }
+    );
+    
+    const subdomains: string[] = [];
+    if (response.data && Array.isArray(response.data)) {
+      response.data.forEach((cert: any) => {
+        if (cert.dns_names && Array.isArray(cert.dns_names)) {
+          cert.dns_names.forEach((name: string) => {
+            if (name.endsWith(domain) && name !== domain) {
+              subdomains.push(name);
+            }
+          });
+        }
+      });
+    }
+    
+    return subdomains;
+  } catch (error: any) {
+    console.error("CertSpotter API error:", error.message);
+    return [];
+  }
+}
 
 // Simple function to fetch from Certificate Transparency logs (crt.sh)
-async function fetchFromCrtSh(domain: string) {
+async function fetchFromCrtSh(domain: string): Promise<string[]> {
   try {
     const response = await axios.get(
       `https://crt.sh/?q=${domain}&output=json`,
       { timeout: 10000 }
     );
     
-    const subdomains = [];
+    const subdomains: string[] = [];
     if (response.data) {
-      response.data.forEach(cert => {
+      response.data.forEach((cert: any) => {
         if (cert.name_value) {
-          cert.name_value.split('\n').forEach(name => {
+          cert.name_value.split('\n').forEach((name: string) => {
             if (name.endsWith(domain) && name !== domain) {
               subdomains.push(name);
             }
@@ -162,7 +193,7 @@ async function fetchFromCrtSh(domain: string) {
     }
     
     return subdomains;
-  } catch (error) {
+  } catch (error: any) {
     console.error("crt.sh API error:", error.message);
     return [];
   }

@@ -21,6 +21,22 @@ export default {
       },
       animation: {
         float: 'float 3s ease-in-out infinite',
+        radar: 'radar 4s linear infinite',
+        scanning: 'scanning 2s ease-in-out infinite',
+      },
+      keyframes: {
+        float: {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(-10px)' },
+        },
+        radar: {
+          '0%': { transform: 'rotate(0deg)' },
+          '100%': { transform: 'rotate(360deg)' },
+        },
+        scanning: {
+          '0%': { transform: 'translateY(-100%)' },
+          '100%': { transform: 'translateY(100%)' },
+        },
       },
     },
   },

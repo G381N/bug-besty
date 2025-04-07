@@ -9,8 +9,11 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    // Fix: Properly retrieve params
+    const { id } = params;
+    
     // Verify project exists
-    const project = await getDocument<Project>('projects', params.id);
+    const project = await getDocument<Project>('projects', id);
     if (!project) {
       return NextResponse.json({ 
         error: 'Project not found' 
@@ -18,7 +21,7 @@ export async function DELETE(
     }
 
     // Mark the project as "deleting" to indicate its status while background deletion continues
-    await ProjectModel.update(params.id, { 
+    await ProjectModel.update(id, { 
       status: 'deleting',
       updatedAt: new Date()
     });
@@ -31,10 +34,10 @@ export async function DELETE(
         const subdomains = await getDocuments<Subdomain>('subdomains', {
           fieldPath: 'projectId',
           operator: '==',
-          value: params.id
+          value: id
         });
         
-        console.log(`Starting deletion of ${subdomains.length} subdomains for project ${params.id}`);
+        console.log(`Starting deletion of ${subdomains.length} subdomains for project ${id}`);
         
         // Delete each subdomain and its vulnerabilities
         // Using a for loop instead of Promise.all to avoid overwhelming Firestore
@@ -66,19 +69,19 @@ export async function DELETE(
         }
         
         // Finally delete the project itself
-        await deleteDocument('projects', params.id);
+        await deleteDocument('projects', id);
         
-        console.log(`Successfully deleted project ${params.id} and all associated data`);
+        console.log(`Successfully deleted project ${id} and all associated data`);
       } catch (error) {
         // Log error but don't affect user experience - deletion happens in background
-        console.error(`Background deletion error for project ${params.id}:`, error);
+        console.error(`Background deletion error for project ${id}:`, error);
         
         // Even if there's an error, try to finalize by deleting the project itself
         try {
-          await deleteDocument('projects', params.id);
-          console.log(`Deleted project ${params.id} after error in background process`);
+          await deleteDocument('projects', id);
+          console.log(`Deleted project ${id} after error in background process`);
         } catch (finalDeleteError) {
-          console.error(`Failed to delete project ${params.id} after error:`, finalDeleteError);
+          console.error(`Failed to delete project ${id} after error:`, finalDeleteError);
         }
       }
     });

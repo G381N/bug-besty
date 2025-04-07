@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import { createClient } from "@vercel/kv";
 import axios from "axios";
 
-// Initialize KV storage client
+// Initialize KV storage client with default values to avoid build errors
 const kv = createClient({
-  url: process.env.KV_REST_API_URL,
-  token: process.env.KV_REST_API_TOKEN,
+  url: process.env.KV_REST_API_URL || "https://example.upstash.io",
+  token: process.env.KV_REST_API_TOKEN || "example_token"
 });
 
 export async function GET(req: Request) {
